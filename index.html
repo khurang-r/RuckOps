@@ -21,6 +21,19 @@
   <!-- Toast region -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+  <!-- Confirmation modal (always mounted; shown on demand) -->
+  <div id="confirm-modal" class="modal-root hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card">
+      <h3 class="modal-title" id="confirm-title">Confirm</h3>
+      <p class="modal-message" id="confirm-message"></p>
+      <div class="modal-actions">
+        <button class="btn btn-text" id="confirm-cancel">CANCEL</button>
+        <button class="btn btn-primary" id="confirm-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Templates ------------------------------------------------------------ -->
 
   <template id="tpl-welcome">
@@ -130,7 +143,7 @@
   <template id="tpl-pre">
     <main class="screen pre">
       <header class="screen-header">
-        <button class="back" data-route="#/home">←</button>
+        <button class="back" data-route="#/home" aria-label="Back">←</button>
         <h2>NEW WORKOUT</h2>
       </header>
       <div class="mode-toggle">
@@ -139,9 +152,13 @@
       </div>
       <section class="pack-section" id="pack-section">
         <label class="muted">PACK WEIGHT</label>
-        <div class="num-input large">
-          <input type="number" min="0" max="200" id="pre-packweight" inputmode="decimal" />
-          <span class="suffix" data-unit="weight">LBS</span>
+        <div class="stepper">
+          <button class="stepper-btn" id="pack-minus" aria-label="Decrease pack weight">−</button>
+          <div class="stepper-display">
+            <input type="number" min="0" max="200" id="pre-packweight" inputmode="decimal" />
+            <span class="suffix" data-unit="weight">LBS</span>
+          </div>
+          <button class="stepper-btn" id="pack-plus" aria-label="Increase pack weight">+</button>
         </div>
       </section>
       <section class="gps-panel">
@@ -151,16 +168,21 @@
       </section>
       <button class="btn btn-primary big-cta" id="begin-tracking" disabled>START</button>
       <p class="muted small foreground-note">
-        Workout records while this tab is open. Don't lock the screen — keep it on.
+        Workout records while this tab is open. Keep the screen on.
       </p>
     </main>
   </template>
 
   <template id="tpl-live">
     <main class="screen live">
+      <header class="live-header">
+        <span class="gps-chip" id="live-gps-chip">📡 SEARCHING</span>
+        <button class="icon-btn" id="live-lock" title="Lock screen" aria-label="Lock screen">🔒</button>
+      </header>
       <div class="hero-metric">
         <span class="hero-num" id="live-distance">0.00</span>
         <span class="hero-unit" data-unit="distance">MI</span>
+        <span class="hero-label">DISTANCE</span>
       </div>
       <div class="sub-metrics">
         <div class="sub-stat"><span class="label">DURATION</span><span class="val" id="live-duration">00:00</span></div>
@@ -168,16 +190,16 @@
         <div class="sub-stat" id="live-pack-stat"><span class="label">PACK</span><span class="val" id="live-pack">--</span></div>
       </div>
       <div class="live-controls">
-        <button class="btn btn-outline" id="live-pause">PAUSE</button>
-        <button class="btn btn-danger" id="live-end">END</button>
-        <button class="btn btn-outline btn-square" id="live-lock" title="Lock screen">🔒</button>
+        <button class="btn btn-outline btn-large" id="live-pause">PAUSE</button>
+        <button class="btn btn-danger btn-large" id="live-end">END</button>
       </div>
       <div class="paused-overlay hidden" id="paused-overlay">
-        <span>PAUSED</span>
-        <button class="btn btn-primary" id="live-resume">RESUME</button>
+        <span class="paused-label">PAUSED</span>
+        <button class="btn btn-primary btn-large" id="live-resume">RESUME</button>
       </div>
       <div class="lock-overlay hidden" id="lock-overlay">
-        <span class="muted">SCREEN LOCKED · double-tap to unlock</span>
+        <span class="lock-label">SCREEN LOCKED</span>
+        <span class="muted small">Double-tap anywhere to unlock</span>
       </div>
     </main>
   </template>
@@ -219,8 +241,9 @@
   <template id="tpl-detail">
     <main class="screen detail">
       <header class="screen-header">
-        <button class="back" data-route="#/history">←</button>
+        <button class="back" data-route="#/history" aria-label="Back">←</button>
         <h2 id="detail-title">WORKOUT</h2>
+        <button class="icon-btn header-action" id="detail-delete" aria-label="Delete workout">🗑</button>
       </header>
       <div class="summary-stats" id="detail-stats"></div>
       <div class="map-wrap" id="detail-map"></div>
@@ -228,7 +251,6 @@
         <h3 class="panel-title">NOTES</h3>
         <p id="detail-notes" class="notes muted">—</p>
       </section>
-      <button class="btn btn-danger" id="detail-delete">DELETE WORKOUT</button>
     </main>
   </template>
 

@@ -130,6 +130,57 @@ function toast(msg, kind = 'info') {
   }, 1800);
 }
 
+// -- Confirmation modal -------------------------------------------------
+// Replaces native confirm() with a styled, accessible overlay.
+// Returns Promise<boolean>: true on confirm, false on cancel.
+
+function showConfirm({ title = 'Confirm', message = '', confirmLabel = 'OK', cancelLabel = 'CANCEL', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const root = document.getElementById('confirm-modal');
+    const titleEl = document.getElementById('confirm-title');
+    const msgEl = document.getElementById('confirm-message');
+    const okBtn = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+    const card = root.querySelector('.modal-card');
+    if (!root || !titleEl || !msgEl || !okBtn || !cancelBtn) {
+      // Defensive fallback if markup somehow missing.
+      resolve(window.confirm(message || title));
+      return;
+    }
+    titleEl.textContent = title;
+    msgEl.textContent = message;
+    okBtn.textContent = confirmLabel;
+    cancelBtn.textContent = cancelLabel;
+    if (danger) card.classList.add('danger');
+    else card.classList.remove('danger');
+    root.classList.remove('hidden');
+
+    const cleanup = (result) => {
+      root.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      root.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => {
+      if (e.target.classList.contains('modal-backdrop')) cleanup(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') cleanup(false);
+      else if (e.key === 'Enter') cleanup(true);
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    root.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+    // Focus the safer option (cancel) by default.
+    cancelBtn.focus();
+  });
+}
+
 // -- Permission state ---------------------------------------------------
 
 async function getLocationPermission() {
@@ -609,6 +660,19 @@ function renderPre(root) {
     settings.units
   );
 
+  // Stepper +/- buttons. Step by 5 lbs / 2 kg — matches typical plate increments.
+  const stepSize = settings.units === 'metric' ? 2 : 5;
+  const minWeight = 0;
+  const maxWeight = settings.units === 'metric' ? 90 : 200;
+  function adjustPack(delta) {
+    const cur = parseFloat(packInput.value) || 0;
+    const next = Math.max(minWeight, Math.min(maxWeight, cur + delta));
+    packInput.value = Math.round(next);
+    if (navigator.vibrate) navigator.vibrate(6);
+  }
+  node.querySelector('#pack-minus').addEventListener('click', () => adjustPack(-stepSize));
+  node.querySelector('#pack-plus').addEventListener('click', () => adjustPack(stepSize));
+
   // GPS probe loop. simple watch.
   const gpsStatus = node.querySelector('#gps-status');
   const startBtn = node.querySelector('#begin-tracking');
@@ -700,6 +764,7 @@ function renderLive(root) {
   const packStat = node.querySelector('#live-pack-stat');
   const pausedOverlay = node.querySelector('#paused-overlay');
   const lockOverlay = node.querySelector('#lock-overlay');
+  const gpsChip = node.querySelector('#live-gps-chip');
 
   if (live.mode !== 'ruck') {
     packStat.style.display = 'none';
@@ -719,6 +784,11 @@ function renderLive(root) {
       paceEl.textContent = '--:--';
     }
     pausedOverlay.classList.toggle('hidden', live.status !== 'paused');
+    if (gpsChip) {
+      const sig = live.gpsSignal || 'searching';
+      gpsChip.className = 'gps-chip ' + sig;
+      gpsChip.textContent = '📡 ' + sig.toUpperCase();
+    }
   };
 
   const off = live.on(update);
@@ -731,7 +801,13 @@ function renderLive(root) {
     live.resume();
   });
   node.querySelector('#live-end').addEventListener('click', async () => {
-    if (!confirm('End workout?')) return;
+    const ok = await showConfirm({
+      title: 'End workout?',
+      message: 'This will save your progress. The current session ends and you\'ll see the summary.',
+      confirmLabel: 'END',
+      cancelLabel: 'KEEP GOING'
+    });
+    if (!ok) return;
     await live.end();
     off();
     navigate('#/summary');
@@ -807,8 +883,15 @@ function renderSummary(root) {
     toast('Workout saved', 'success');
     navigate('#/home');
   });
-  node.querySelector('#summary-discard').addEventListener('click', () => {
-    if (!confirm('Discard this workout? It will be lost.')) return;
+  node.querySelector('#summary-discard').addEventListener('click', async () => {
+    const ok = await showConfirm({
+      title: 'Discard workout?',
+      message: 'This workout will be lost. You can\'t undo this.',
+      confirmLabel: 'DISCARD',
+      cancelLabel: 'KEEP',
+      danger: true
+    });
+    if (!ok) return;
     Storage.remove(DRAFT_KEY);
     window.__liveWorkout = null;
     toast('Discarded', 'danger');
@@ -918,8 +1001,15 @@ function renderDetail(root, hash) {
 
   node.querySelector('.back').addEventListener('click', () => navigate('#/history'));
 
-  node.querySelector('#detail-delete').addEventListener('click', () => {
-    if (!confirm('Delete this workout? This cannot be undone.')) return;
+  node.querySelector('#detail-delete').addEventListener('click', async () => {
+    const ok = await showConfirm({
+      title: 'Delete this workout?',
+      message: 'This cannot be undone. The workout and its route will be removed permanently.',
+      confirmLabel: 'DELETE',
+      cancelLabel: 'KEEP',
+      danger: true
+    });
+    if (!ok) return;
     Workouts.delete(w.id);
     toast('Deleted', 'danger');
     navigate('#/history');
@@ -1006,8 +1096,15 @@ function renderProfile(root) {
     toast('CSV downloaded', 'success');
   });
 
-  node.querySelector('#reset-app').addEventListener('click', () => {
-    if (!confirm('Erase ALL local data? Workouts and settings will be deleted. This cannot be undone.')) return;
+  node.querySelector('#reset-app').addEventListener('click', async () => {
+    const ok = await showConfirm({
+      title: 'Erase all local data?',
+      message: 'Every workout, setting, and the onboarding state will be deleted. This cannot be undone.',
+      confirmLabel: 'ERASE',
+      cancelLabel: 'CANCEL',
+      danger: true
+    });
+    if (!ok) return;
     Storage.remove(SETTINGS_KEY);
     Storage.remove(WORKOUTS_KEY);
     Storage.remove(DRAFT_KEY);
