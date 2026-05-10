@@ -1149,3 +1149,98 @@ select {
 .tabbar {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+/* Pacing options (pre-workout) ----------------------------------------- */
+
+.pacing-section {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pacing-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pacing-opt {
+  background: var(--surface);
+  border: 1px solid #2a2d2a;
+  color: var(--text);
+  padding: 14px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.pacing-opt:active { background: #2a2d2a; }
+
+.pacing-opt.selected {
+  border-color: var(--amber);
+  background: rgba(244, 129, 31, 0.08);
+}
+
+.pacing-opt .opt-label {
+  font-family: 'Roboto Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-size: 14px;
+}
+
+.pacing-opt .opt-sub {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pacing-opt.selected .opt-label {
+  color: var(--amber);
+}
+
+/* Pacing banner (live screen) ----------------------------------------- */
+
+.pacing-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--surface);
+  border-left: 4px solid var(--olive);
+  margin: 4px 0;
+}
+
+.pacing-banner.run {
+  border-left-color: var(--olive);
+  background: rgba(74, 93, 35, 0.12);
+}
+
+.pacing-banner.walk {
+  border-left-color: var(--amber);
+  background: rgba(244, 129, 31, 0.12);
+}
+
+.pacing-phase {
+  font-family: 'Roboto Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  font-size: 22px;
+}
+
+.pacing-banner.run .pacing-phase { color: var(--olive); }
+.pacing-banner.walk .pacing-phase { color: var(--amber); }
+
+.pacing-remaining {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text);
+}

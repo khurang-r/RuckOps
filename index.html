@@ -161,6 +161,23 @@
           <button class="stepper-btn" id="pack-plus" aria-label="Increase pack weight">+</button>
         </div>
       </section>
+      <section class="pacing-section">
+        <label class="muted">PACING <span class="muted small">(OPTIONAL)</span></label>
+        <div class="pacing-options">
+          <button class="pacing-opt selected" data-pacing="off">
+            <span class="opt-label">OFF</span>
+            <span class="opt-sub">steady</span>
+          </button>
+          <button class="pacing-opt" data-pacing="shuffle-walk">
+            <span class="opt-label">SHUFFLE / WALK</span>
+            <span class="opt-sub">200m run · 100m walk</span>
+          </button>
+          <button class="pacing-opt" data-pacing="run-walk">
+            <span class="opt-label">RUN / WALK</span>
+            <span class="opt-sub">4 min run · 1 min walk</span>
+          </button>
+        </div>
+      </section>
       <section class="gps-panel">
         <span class="gps-icon">📡</span>
         <span>GPS SIGNAL: </span>
@@ -179,6 +196,10 @@
         <span class="gps-chip" id="live-gps-chip">📡 SEARCHING</span>
         <button class="icon-btn" id="live-lock" title="Lock screen" aria-label="Lock screen">🔒</button>
       </header>
+      <div class="pacing-banner hidden" id="pacing-banner">
+        <span class="pacing-phase" id="pacing-phase">RUN</span>
+        <span class="pacing-remaining" id="pacing-remaining">--</span>
+      </div>
       <div class="hero-metric">
         <span class="hero-num" id="live-distance">0.00</span>
         <span class="hero-unit" data-unit="distance">MI</span>

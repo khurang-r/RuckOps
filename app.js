@@ -12,6 +12,15 @@ const MIN_ACCURACY_M = 50;       // accept fixes only if better than 50m
 const STATIONARY_M_PER_S = 0.5;  // ~1.1 mph; below this == auto-pause
 const STATIONARY_TIMEOUT_MS = 15000;
 
+// GPS filter — device-invariant distance accumulation.
+// These gates filter out the common noise sources that cause two phones
+// recording side-by-side to disagree (drift, accuracy-radius bounce, jumps).
+const SPEED_JUMP_MAX_M_S    = 12;    // ~27 mph; reject anything above as a GPS jump
+const ACCURACY_NOISE_K      = 1.5;   // movement must exceed K × accuracy to count
+const SMOOTHING_ALPHA       = 0.5;   // EMA on accepted positions; 1.0 = no smoothing
+const ROLLING_PACE_WINDOW_MS = 30000; // 30s rolling window for "current pace"
+const MIN_DISTANCE_FOR_PACE_M = 20;   // need this much before reporting pace
+
 // -- Storage ------------------------------------------------------------
 
 const Storage = {
@@ -221,8 +230,9 @@ class LiveWorkout {
     this.pausedAt = null;
     this.lastTickAt = this.startedAt;
     this.distanceM = 0;
-    this.points = [];        // [{ lat, lon, t, acc }]
-    this.lastPoint = null;
+    this.points = [];        // [{ lat, lon, t, acc }] — smoothed, plotted
+    this.lastPoint = null;   // last accepted smoothed point
+    this.lastFix = null;     // last raw fix (for filter gates)
     this.watchId = null;
     this.status = 'running'; // 'running' | 'paused' | 'ended'
     this.lastMoveAt = this.startedAt;
@@ -231,6 +241,10 @@ class LiveWorkout {
     this.tickHandle = null;
     this.wakeLock = null;
     this.autoPaused = false;
+    this.rollingBuffer = []; // [{ t, dist }] for current-pace window
+    this.pacingPlan = null;  // optional PacingPlan
+    this.currentPhase = null; // 'run' | 'walk' | null
+    this.filterStats = { accepted: 0, rejAccuracy: 0, rejJump: 0, rejNoise: 0, rejDrift: 0 };
   }
 
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -260,34 +274,124 @@ class LiveWorkout {
 
   onPosition(pos) {
     const { latitude, longitude, accuracy } = pos.coords;
-    if (accuracy != null && accuracy > MIN_ACCURACY_M) {
-      this.gpsSignal = accuracy < 25 ? 'strong' : 'fair';
+    // Prefer the fix's own timestamp; some browsers deliver it as the time
+    // the chip produced the fix, which is more accurate than wall-clock at
+    // callback time (which has unbounded processing latency).
+    const now = pos.timestamp || Date.now();
+
+    // Update GPS signal indicator regardless of acceptance.
+    if (accuracy == null) {
+      this.gpsSignal = 'searching';
       this.emit();
       return;
     }
-    this.gpsSignal = accuracy != null && accuracy < 15 ? 'strong' : 'fair';
+    this.gpsSignal = accuracy < 15 ? 'strong' : accuracy < 30 ? 'fair' : 'searching';
 
-    const now = Date.now();
-    const point = { lat: latitude, lon: longitude, t: now, acc: accuracy };
-
-    if (this.status === 'running') {
-      if (this.lastPoint) {
-        const d = haversine(this.lastPoint, point);
-        const dt = (now - this.lastPoint.t) / 1000;
-        const speed = dt > 0 ? d / dt : 0;
-        if (speed > STATIONARY_M_PER_S) {
-          this.distanceM += d;
-          this.lastMoveAt = now;
-          if (this.autoPaused) {
-            this.autoPaused = false;
-            this.status = 'running';
-          }
-        }
-      }
-      this.points.push(point);
-      this.lastPoint = point;
+    // GATE 0: accuracy floor — discard junk fixes outright.
+    if (accuracy > MIN_ACCURACY_M) {
+      this.filterStats.rejAccuracy++;
+      this.emit();
+      return;
     }
+
+    const rawFix = { lat: latitude, lon: longitude, t: now, acc: accuracy };
+
+    // First valid fix — seed the filter, do not add distance yet.
+    if (!this.lastFix) {
+      this.lastFix = rawFix;
+      const seed = { lat: latitude, lon: longitude, t: now, acc: accuracy };
+      this.lastPoint = seed;
+      this.points.push(seed);
+      this.filterStats.accepted++;
+      this.emit();
+      return;
+    }
+
+    if (this.status !== 'running') {
+      // Paused: don't accumulate distance, but keep timestamp current so the
+      // next-after-resume delta uses the right dt.
+      this.lastFix = { ...this.lastFix, t: now };
+      this.emit();
+      return;
+    }
+
+    const rawD = haversine(this.lastFix, rawFix);
+    const dt = (now - this.lastFix.t) / 1000;
+    const impliedSpeed = dt > 0 ? rawD / dt : 0;
+
+    // GATE 1: implausible speed jump — likely GPS teleport.
+    if (impliedSpeed > SPEED_JUMP_MAX_M_S) {
+      this.filterStats.rejJump++;
+      // Don't update lastFix — wait for a believable fix.
+      this.emit();
+      return;
+    }
+
+    // GATE 2: movement within combined accuracy circle — noise, not motion.
+    // This is the gate that fixes cross-device drift: a fix 8m away when both
+    // fixes have 10m accuracy is statistically indistinguishable from standing
+    // still, even though it implies > 0.5 m/s.
+    const noiseFloor = ACCURACY_NOISE_K * Math.max(accuracy, this.lastFix.acc);
+    if (rawD < noiseFloor) {
+      this.filterStats.rejNoise++;
+      // CRITICAL: do NOT touch lastFix. The next fix needs to compute its
+      // implied speed from the last *accepted* fix's time, not from the
+      // last *seen* fix's time, or it'll look like an artificial jump.
+      this.emit();
+      return;
+    }
+
+    // GATE 3: drift while auto-paused — even if movement passes noise floor,
+    // if we've already detected stationary and speed is low, reject.
+    if (this.autoPaused && impliedSpeed < STATIONARY_M_PER_S * 2) {
+      this.filterStats.rejDrift++;
+      // Same reason as GATE 2: don't touch lastFix.
+      this.emit();
+      return;
+    }
+
+    // Apply exponential smoothing on position. This dampens GPS chatter
+    // without losing real motion (alpha=0.5 means 50% weight on new fix).
+    const smoothLat = this.lastPoint.lat * (1 - SMOOTHING_ALPHA) + latitude * SMOOTHING_ALPHA;
+    const smoothLon = this.lastPoint.lon * (1 - SMOOTHING_ALPHA) + longitude * SMOOTHING_ALPHA;
+    const smoothed = { lat: smoothLat, lon: smoothLon, t: now, acc: accuracy };
+
+    // Distance from previous smoothed point to new smoothed point.
+    const d = haversine(this.lastPoint, smoothed);
+    this.distanceM += d;
+    this.lastPoint = smoothed;
+    this.lastFix = rawFix;
+    this.points.push(smoothed);
+    this.lastMoveAt = now;
+    this.filterStats.accepted++;
+
+    // Rolling pace buffer for "current pace" (last 30s).
+    this.rollingBuffer.push({ t: now, dist: this.distanceM });
+    while (this.rollingBuffer.length > 1 &&
+           now - this.rollingBuffer[0].t > ROLLING_PACE_WINDOW_MS) {
+      this.rollingBuffer.shift();
+    }
+
+    if (this.autoPaused) {
+      // We're moving again — un-pause.
+      this.autoPaused = false;
+      this.status = 'running';
+    }
+
     this.emit();
+  }
+
+  // Returns seconds-per-unit using the recent rolling window, or null.
+  getRollingPaceSecPerUnit(units) {
+    if (this.rollingBuffer.length < 2) return null;
+    const first = this.rollingBuffer[0];
+    const last = this.rollingBuffer[this.rollingBuffer.length - 1];
+    const dt = (last.t - first.t) / 1000;
+    const dd = last.dist - first.dist;
+    if (dd < MIN_DISTANCE_FOR_PACE_M || dt < 5) return null;
+    const speed = dd / dt; // m/s
+    if (speed < 0.1) return null;
+    return units === 'metric' ? 1000 / speed : 1609.344 / speed;
   }
 
   onError(err) {
@@ -306,6 +410,14 @@ class LiveWorkout {
         this.autoPaused = true;
         this.pause();
         toast('AUTO-PAUSED', 'info');
+      }
+      // Pacing plan: check for phase transition (run/walk intervals).
+      if (this.pacingPlan) {
+        const result = this.pacingPlan.tick(this.elapsedMs, this.distanceM);
+        if (result.phase !== this.currentPhase) {
+          this.currentPhase = result.phase;
+          fireCue(result.phase);
+        }
       }
     }
     this.lastTickAt = now;
@@ -367,6 +479,76 @@ class LiveWorkout {
       schemaVersion: 1
     };
   }
+}
+
+// -- Pacing intervals ---------------------------------------------------
+// A PacingPlan emits phase transitions (run/walk) based on distance or time.
+// Used for shuffle-walk and Galloway-style run-walk intervals.
+
+class PacingPlan {
+  constructor({ style, runDistM, walkDistM, runSecs, walkSecs }) {
+    this.style = style;             // 'shuffle-walk' | 'run-walk'
+    this.runDistM = runDistM || 200;
+    this.walkDistM = walkDistM || 100;
+    this.runSecs = runSecs || 240;  // 4 min default (Galloway)
+    this.walkSecs = walkSecs || 60; // 1 min default
+  }
+
+  // Returns { phase: 'run'|'walk', remainingM?, remainingMs?, intoPhase?, phaseLength? }
+  tick(elapsedMs, distM) {
+    if (this.style === 'shuffle-walk') {
+      const cycle = this.runDistM + this.walkDistM;
+      const intoCycle = distM % cycle;
+      if (intoCycle < this.runDistM) {
+        return {
+          phase: 'run',
+          remainingM: this.runDistM - intoCycle,
+          phaseLengthM: this.runDistM,
+          intoPhaseM: intoCycle
+        };
+      }
+      return {
+        phase: 'walk',
+        remainingM: cycle - intoCycle,
+        phaseLengthM: this.walkDistM,
+        intoPhaseM: intoCycle - this.runDistM
+      };
+    }
+    // run-walk (time-based, Galloway-style)
+    const cycleMs = (this.runSecs + this.walkSecs) * 1000;
+    const intoCycle = elapsedMs % cycleMs;
+    const runMs = this.runSecs * 1000;
+    if (intoCycle < runMs) {
+      return {
+        phase: 'run',
+        remainingMs: runMs - intoCycle,
+        phaseLengthMs: runMs,
+        intoPhaseMs: intoCycle
+      };
+    }
+    return {
+      phase: 'walk',
+      remainingMs: cycleMs - intoCycle,
+      phaseLengthMs: this.walkSecs * 1000,
+      intoPhaseMs: intoCycle - runMs
+    };
+  }
+}
+
+// Fire vibration + speech cue on phase change. Best-effort; silently
+// degrades if either API is unavailable (older browsers, iOS restrictions).
+function fireCue(phase) {
+  try {
+    if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+  } catch {}
+  try {
+    if ('speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance(phase === 'run' ? 'Run' : 'Walk');
+      u.rate = 1.1;
+      u.volume = 1.0;
+      window.speechSynthesis.speak(u);
+    }
+  } catch {}
 }
 
 // -- Workouts repository ------------------------------------------------
@@ -673,6 +855,17 @@ function renderPre(root) {
   node.querySelector('#pack-minus').addEventListener('click', () => adjustPack(-stepSize));
   node.querySelector('#pack-plus').addEventListener('click', () => adjustPack(stepSize));
 
+  // Pacing option selection
+  let pacing = 'off';
+  node.querySelectorAll('.pacing-opt').forEach(b => {
+    b.addEventListener('click', () => {
+      node.querySelectorAll('.pacing-opt').forEach(x => x.classList.remove('selected'));
+      b.classList.add('selected');
+      pacing = b.dataset.pacing;
+      if (navigator.vibrate) navigator.vibrate(6);
+    });
+  });
+
   // GPS probe loop. simple watch.
   const gpsStatus = node.querySelector('#gps-status');
   const startBtn = node.querySelector('#begin-tracking');
@@ -736,8 +929,12 @@ function renderPre(root) {
       watchId = null;
     }
     // Hand off live workout via window-scoped state.
-    window.__liveWorkout = new LiveWorkout({ mode, packWeightKg: packKg });
-    window.__liveWorkout.start();
+    const lw = new LiveWorkout({ mode, packWeightKg: packKg });
+    if (pacing !== 'off') {
+      lw.pacingPlan = new PacingPlan({ style: pacing });
+    }
+    window.__liveWorkout = lw;
+    lw.start();
     navigate('#/live');
   });
 
@@ -765,6 +962,9 @@ function renderLive(root) {
   const pausedOverlay = node.querySelector('#paused-overlay');
   const lockOverlay = node.querySelector('#lock-overlay');
   const gpsChip = node.querySelector('#live-gps-chip');
+  const pacingBanner = node.querySelector('#pacing-banner');
+  const pacingPhaseEl = node.querySelector('#pacing-phase');
+  const pacingRemainingEl = node.querySelector('#pacing-remaining');
 
   if (live.mode !== 'ruck') {
     packStat.style.display = 'none';
@@ -775,7 +975,13 @@ function renderLive(root) {
   const update = () => {
     distEl.textContent = Units.formatDistance(live.distanceM, settings.units);
     durEl.textContent = Units.formatDuration(live.elapsedMs);
-    if (live.distanceM > 50) {
+
+    // Pace: rolling 30s window for "current pace" (matches Strava/Garmin
+    // behavior). Falls back to average pace if rolling window not yet ready.
+    const rolling = live.getRollingPaceSecPerUnit(settings.units);
+    if (rolling != null) {
+      paceEl.textContent = Units.formatPace(rolling);
+    } else if (live.distanceM > MIN_DISTANCE_FOR_PACE_M) {
       const secPerUnit = settings.units === 'metric'
         ? (live.elapsedMs / 1000) / (live.distanceM / 1000)
         : (live.elapsedMs / 1000) / (live.distanceM / 1609.344);
@@ -783,11 +989,36 @@ function renderLive(root) {
     } else {
       paceEl.textContent = '--:--';
     }
+
     pausedOverlay.classList.toggle('hidden', live.status !== 'paused');
     if (gpsChip) {
       const sig = live.gpsSignal || 'searching';
       gpsChip.className = 'gps-chip ' + sig;
       gpsChip.textContent = '📡 ' + sig.toUpperCase();
+    }
+
+    // Pacing banner — visible only if a plan is attached.
+    if (live.pacingPlan && pacingBanner) {
+      const result = live.pacingPlan.tick(live.elapsedMs, live.distanceM);
+      pacingBanner.classList.remove('hidden');
+      pacingBanner.classList.toggle('run', result.phase === 'run');
+      pacingBanner.classList.toggle('walk', result.phase === 'walk');
+      pacingPhaseEl.textContent = result.phase === 'run'
+        ? (live.pacingPlan.style === 'shuffle-walk' ? 'SHUFFLE' : 'RUN')
+        : 'WALK';
+      if (result.remainingM != null) {
+        pacingRemainingEl.textContent =
+          Units.formatDistance(result.remainingM, settings.units) + ' LEFT';
+      } else if (result.remainingMs != null) {
+        const s = Math.ceil(result.remainingMs / 1000);
+        const mm = Math.floor(s / 60).toString().padStart(2, '0');
+        const ss = (s % 60).toString().padStart(2, '0');
+        pacingRemainingEl.textContent = mm + ':' + ss + ' LEFT';
+      } else {
+        pacingRemainingEl.textContent = '';
+      }
+    } else if (pacingBanner) {
+      pacingBanner.classList.add('hidden');
     }
   };
 
