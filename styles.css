@@ -1386,3 +1386,114 @@ select {
 .sub-stat .val.slow      { color: var(--amber); }
 .sub-stat .val.too-slow  { color: var(--danger); }
 .sub-stat .val.too-fast  { color: #5b8db3; }
+
+/* Fuel/hydration alert (live screen) ----------------------------------- */
+
+.fuel-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(91, 141, 179, 0.15);
+  border: 1px solid rgba(91, 141, 179, 0.4);
+  margin: 4px 0;
+  animation: fuel-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes fuel-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(91, 141, 179, 0.35); }
+  50%      { box-shadow: 0 0 0 6px rgba(91, 141, 179, 0); }
+}
+
+.fuel-alert-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.fuel-alert-title {
+  font-family: 'Roboto Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  font-size: 18px;
+  color: #8db4d6;
+}
+
+.fuel-alert-detail {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.fuel-alert-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.fuel-alert-actions .btn {
+  padding: 10px 14px;
+  min-height: 44px;
+  font-size: 13px;
+}
+
+/* Goal status chip + required pace hint -------------------------------- */
+
+.goal-status-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.goal-status-chip.on-track { color: var(--olive); }
+.goal-status-chip.ahead    { color: #5b8db3; }
+.goal-status-chip.behind   { color: var(--amber); }
+
+.required-pace-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 4px 0 0;
+  text-align: center;
+}
+
+.required-pace-hint.urgent { color: var(--amber); }
+
+/* Fuel plan preview (pre-workout) -------------------------------------- */
+
+.fuel-plan-preview {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fuel-plan-preview .row {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+
+.fuel-plan-preview .row .label {
+  color: var(--muted);
+}
+
+.fuel-plan-preview .row .val {
+  color: var(--text);
+}
+
+.fuel-plan-preview .notes {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+  margin: 4px 0 0;
+}

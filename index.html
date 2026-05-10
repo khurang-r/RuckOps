@@ -237,6 +237,11 @@
             <button class="stepper-btn" id="goal-plus" aria-label="Increase">+</button>
           </div>
           <p class="goal-eta" id="goal-eta"></p>
+          <div class="fuel-plan-preview hidden" id="fuel-plan-preview">
+            <div class="row"><span class="label">Hydration</span><span class="val" id="fuel-plan-water"></span></div>
+            <div class="row"><span class="label">Fuel</span><span class="val" id="fuel-plan-carbs"></span></div>
+            <p class="notes" id="fuel-plan-notes"></p>
+          </div>
         </div>
       </section>
       <section class="gps-panel">
@@ -257,6 +262,16 @@
         <span class="gps-chip" id="live-gps-chip">📡 SEARCHING</span>
         <button class="icon-btn" id="live-lock" title="Lock screen" aria-label="Lock screen">🔒</button>
       </header>
+      <div class="fuel-alert hidden" id="fuel-alert">
+        <div class="fuel-alert-text">
+          <span class="fuel-alert-title" id="fuel-alert-title">HYDRATE</span>
+          <span class="fuel-alert-detail" id="fuel-alert-detail">6–8 oz · 180–240 ml</span>
+        </div>
+        <div class="fuel-alert-actions">
+          <button class="btn btn-text" id="fuel-skip">SKIP</button>
+          <button class="btn btn-primary" id="fuel-done">DONE</button>
+        </div>
+      </div>
       <div class="pacing-banner hidden" id="pacing-banner">
         <span class="pacing-phase" id="pacing-phase">RUN</span>
         <span class="pacing-remaining" id="pacing-remaining">--</span>
@@ -265,9 +280,10 @@
         <div class="goal-progress-bar"><div class="goal-progress-fill" id="goal-progress-fill"></div></div>
         <div class="goal-progress-label">
           <span id="goal-progress-current">0</span>
-          <span id="goal-progress-eta">ETA --:--</span>
+          <span class="goal-status-chip" id="goal-status-chip"></span>
           <span id="goal-progress-target">0</span>
         </div>
+        <p class="required-pace-hint hidden" id="required-pace-hint"></p>
       </div>
       <div class="hero-metric">
         <span class="hero-num" id="live-distance">0.00</span>

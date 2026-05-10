@@ -247,6 +247,11 @@ class LiveWorkout {
     this.goalDistM = null;    // optional, meters
     this.goalTimeMs = null;   // optional, ms
     this.targetPaceSecPerMi = null; // optional, for pace color cue
+    this.targetTotalMs = null;       // expected total time at start (distance goal)
+    this.goalProjectedDistanceM = null; // expected total distance at start (time goal)
+    this.fuelCoach = null;   // optional FuelCoach
+    this.pendingFuelAlert = null; // mirrored for renderer
+    this.compensatedPauseMs = 0;     // total time absorbed by self-heal
     this.filterStats = { accepted: 0, rejAccuracy: 0, rejJump: 0, rejNoise: 0, rejDrift: 0 };
   }
 
@@ -422,9 +427,33 @@ class LiveWorkout {
           fireCue(result.phase);
         }
       }
+      // Fuel coach: tick once per second; fire alert if due.
+      if (this.fuelCoach) {
+        const alert = this.fuelCoach.tick(this.elapsedMs, this.distanceM);
+        if (alert && alert !== this.pendingFuelAlert) {
+          this.pendingFuelAlert = alert;
+          fireFuelCue(alert);
+        }
+      }
     }
     this.lastTickAt = now;
     this.emit();
+  }
+
+  ackFuel() {
+    if (this.fuelCoach && this.fuelCoach.pendingAlert) {
+      this.fuelCoach.ack(this.elapsedMs);
+      this.pendingFuelAlert = null;
+      this.emit();
+    }
+  }
+
+  dismissFuel() {
+    if (this.fuelCoach && this.fuelCoach.pendingAlert) {
+      this.fuelCoach.dismiss();
+      this.pendingFuelAlert = null;
+      this.emit();
+    }
   }
 
   pause() {
@@ -436,11 +465,84 @@ class LiveWorkout {
 
   resume() {
     if (this.status !== 'paused') return;
+    const now = Date.now();
+    const pausedDurationMs = this.pausedAt ? now - this.pausedAt : 0;
+
+    // SELF-HEAL: if user paused longer than ~30s and we're running intervals,
+    // treat the pause as having served the walk-break purpose. Realign the
+    // cycle so resume starts at the top of a fresh RUN phase. Short pauses
+    // (water sip, traffic light) resume the cycle unchanged so cadence stays
+    // intact.
+    if (this.pacingPlan && pausedDurationMs > 30000) {
+      const cycleMs = (this.pacingPlan.runSecs + this.pacingPlan.walkSecs) * 1000;
+      if (cycleMs > 0) {
+        const newElapsed = Math.ceil(this.elapsedMs / cycleMs) * cycleMs;
+        if (newElapsed > this.elapsedMs) {
+          this.elapsedMs = newElapsed;
+        }
+      }
+      this.currentPhase = null; // force fireCue on next tick
+      this.compensatedPauseMs = (this.compensatedPauseMs || 0) + pausedDurationMs;
+    }
+
     this.status = 'running';
-    this.lastTickAt = Date.now();
-    this.lastMoveAt = Date.now();
+    this.lastTickAt = now;
+    this.lastMoveAt = now;
     this.autoPaused = false;
     this.emit();
+  }
+
+  // Required pace from NOW to hit a distance- or time-based goal, in
+  // sec-per-mile. Returns null if no goal or already past it.
+  getRequiredPaceSecPerMi() {
+    if (this.goalDistM) {
+      const remainingMs = (this.targetTotalMs || null);
+      if (!remainingMs || this.distanceM >= this.goalDistM) return null;
+      // Time remaining = expected total - elapsed. Expected total is set
+      // at start by pre-workout from goalDistM + targetPaceSecPerMi.
+      const remainingTime = remainingMs - this.elapsedMs;
+      if (remainingTime <= 0) return null;
+      const remainingMi = (this.goalDistM - this.distanceM) / 1609.344;
+      if (remainingMi <= 0) return null;
+      return remainingTime / 1000 / remainingMi;
+    }
+    if (this.goalTimeMs) {
+      const remainingMs = this.goalTimeMs - this.elapsedMs;
+      if (remainingMs <= 0) return null;
+      if (!this.goalProjectedDistanceM) return null;
+      const remainingMi = (this.goalProjectedDistanceM - this.distanceM) / 1609.344;
+      if (remainingMi <= 0) return null;
+      return remainingMs / 1000 / remainingMi;
+    }
+    return null;
+  }
+
+  // Returns 'on-track' | 'ahead' | 'behind' | null based on projected vs goal.
+  getGoalStatus(currentSecPerMi) {
+    if (!currentSecPerMi) return null;
+    if (this.goalDistM && this.targetTotalMs) {
+      const projectedTotalMi = this.distanceM / 1609.344 +
+        ((this.targetTotalMs - this.elapsedMs) / 1000) / currentSecPerMi;
+      const goalMi = this.goalDistM / 1609.344;
+      const diff = projectedTotalMi - goalMi;
+      if (Math.abs(diff) < 0.05) return 'on-track';
+      return diff > 0 ? 'ahead' : 'behind';
+    }
+    if (this.goalTimeMs && this.goalProjectedDistanceM) {
+      // Time-based goal — we WILL stop at goalTimeMs, so the question is
+      // whether projected distance at current pace meets/exceeds the
+      // original projected distance (the implicit "target distance" set at
+      // pre-workout).
+      const remainingMs = this.goalTimeMs - this.elapsedMs;
+      if (remainingMs <= 0) return this.distanceM >= this.goalProjectedDistanceM ? 'on-track' : 'behind';
+      const projectedTotalMi = this.distanceM / 1609.344 +
+        (remainingMs / 1000) / currentSecPerMi;
+      const goalMi = this.goalProjectedDistanceM / 1609.344;
+      const diff = projectedTotalMi - goalMi;
+      if (Math.abs(diff) < 0.05) return 'on-track';
+      return diff > 0 ? 'ahead' : 'behind';
+    }
+    return null;
   }
 
   async end() {
@@ -479,7 +581,17 @@ class LiveWorkout {
       avgPaceSecPerKm,
       points: this.points.map(p => ({ lat: p.lat, lon: p.lon, t: p.t })),
       notes: '',
-      schemaVersion: 1
+      // Provenance: useful for post-workout review and for future device-
+      // comparison studies. All optional, all stable schema additions.
+      fuelHistory: this.fuelCoach ? this.fuelCoach.history : [],
+      compensatedPauseMs: this.compensatedPauseMs || 0,
+      filterStats: { ...this.filterStats },
+      pacingPlan: this.pacingPlan
+        ? { runSecs: this.pacingPlan.runSecs, walkSecs: this.pacingPlan.walkSecs }
+        : null,
+      goalDistM: this.goalDistM,
+      goalTimeMs: this.goalTimeMs,
+      schemaVersion: 2
     };
   }
 }
@@ -602,6 +714,116 @@ class PacingPlan {
   }
 }
 
+// -- Fuel & hydration coach --------------------------------------------
+// Schedule based on ACSM Position Stand on Hydration and Sports Dietitians
+// Australia endurance fueling consensus:
+// - Hydration: 0.4–0.8 L/hr standard, 0.6–1.0 L/hr in heat or heavy load
+// - Fueling: 30–60 g carbs/hr for sessions > 60 min; up to 90 g/hr beyond
+//   2.5 hr if using glucose+fructose blend
+// - Pre-empt the 2% bodyweight loss threshold where performance degrades
+
+class FuelCoach {
+  constructor({ packKg, mode, goalDistM, goalTimeMs, expectedDurationMs }) {
+    this.packKg = packKg || 0;
+    this.mode = mode;
+    this.goalDistM = goalDistM;
+    this.goalTimeMs = goalTimeMs;
+    this.expectedDurationMs = expectedDurationMs;
+    this.lastAckHydrateMs = 0;
+    this.lastAckFuelMs = 0;
+    this.pendingAlert = null;
+    this.history = [];
+  }
+
+  hydrateIntervalMs() {
+    if (this.packKg >= 18) return 12 * 60 * 1000;
+    if (this.packKg >= 9)  return 14 * 60 * 1000;
+    return 15 * 60 * 1000;
+  }
+
+  fuelIntervalMs() {
+    const total = this.expectedDurationMs || 0;
+    if (total > 150 * 60 * 1000) return 30 * 60 * 1000;
+    return 45 * 60 * 1000;
+  }
+
+  projectedDurationMs(elapsedMs, distanceM) {
+    if (this.goalTimeMs) return this.goalTimeMs;
+    if (this.goalDistM && distanceM > 100) {
+      return elapsedMs * (this.goalDistM / distanceM);
+    }
+    return this.expectedDurationMs || 0;
+  }
+
+  tick(elapsedMs, distanceM) {
+    if (this.pendingAlert) return this.pendingAlert;
+    const total = this.projectedDurationMs(elapsedMs, distanceM);
+
+    const firstHydrateAt = 20 * 60 * 1000;
+    if (elapsedMs >= firstHydrateAt) {
+      const dueAt = (this.lastAckHydrateMs || 0) + (this.lastAckHydrateMs ? this.hydrateIntervalMs() : 0);
+      if (elapsedMs >= Math.max(firstHydrateAt, dueAt)) {
+        const amount = this.packKg >= 9 ? '6–10 oz · 180–300 ml' : '6–8 oz · 180–240 ml';
+        this.pendingAlert = { type: 'hydrate', title: 'HYDRATE', text: amount, firedAt: elapsedMs };
+        return this.pendingAlert;
+      }
+    }
+
+    if (total > 60 * 60 * 1000) {
+      const firstFuelAt = 45 * 60 * 1000;
+      if (elapsedMs >= firstFuelAt) {
+        const dueAt = (this.lastAckFuelMs || 0) + (this.lastAckFuelMs ? this.fuelIntervalMs() : 0);
+        if (elapsedMs >= Math.max(firstFuelAt, dueAt)) {
+          const carbs = total > 150 * 60 * 1000 ? '40–60 g carbs' : '30–45 g carbs';
+          this.pendingAlert = { type: 'fuel', title: 'FUEL', text: carbs + ' · gel, chew, or bar', firedAt: elapsedMs };
+          return this.pendingAlert;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  ack(elapsedMs) {
+    if (!this.pendingAlert) return;
+    const type = this.pendingAlert.type;
+    if (type === 'hydrate') this.lastAckHydrateMs = elapsedMs;
+    else if (type === 'fuel') this.lastAckFuelMs = elapsedMs;
+    this.history.push({ type, t: elapsedMs });
+    this.pendingAlert = null;
+  }
+
+  dismiss() {
+    if (this.pendingAlert) {
+      const type = this.pendingAlert.type;
+      const elapsed = this.pendingAlert.firedAt;
+      if (type === 'hydrate') this.lastAckHydrateMs = elapsed - this.hydrateIntervalMs() + 5 * 60 * 1000;
+      else if (type === 'fuel') this.lastAckFuelMs = elapsed - this.fuelIntervalMs() + 5 * 60 * 1000;
+      this.pendingAlert = null;
+    }
+  }
+}
+
+function fuelPlanEstimate({ durationMs, packKg }) {
+  if (!durationMs || durationMs < 20 * 60 * 1000) {
+    return { hydrationMl: 0, hydrationOz: 0, carbsG: 0, notes: 'Under 20 min — water optional, no carbs needed.' };
+  }
+  const hours = durationMs / 3600 / 1000;
+  const lPerHr = packKg >= 18 ? 0.7 : packKg >= 9 ? 0.55 : 0.5;
+  const hydrationL = hours * lPerHr;
+  let carbsG = 0;
+  if (durationMs > 60 * 60 * 1000) {
+    const rate = durationMs > 150 * 60 * 1000 ? 60 : 40;
+    carbsG = Math.round((durationMs - 30 * 60 * 1000) / 3600 / 1000 * rate);
+  }
+  return {
+    hydrationMl: Math.round(hydrationL * 1000),
+    hydrationOz: Math.round(hydrationL * 33.814),
+    carbsG,
+    notes: null
+  };
+}
+
 // Fire vibration + speech cue on phase change. Best-effort; silently
 // degrades if either API is unavailable (older browsers, iOS restrictions).
 function fireCue(phase) {
@@ -612,6 +834,23 @@ function fireCue(phase) {
     if ('speechSynthesis' in window) {
       const u = new SpeechSynthesisUtterance(phase === 'run' ? 'Run' : 'Walk');
       u.rate = 1.1;
+      u.volume = 1.0;
+      window.speechSynthesis.speak(u);
+    }
+  } catch {}
+}
+
+// Fuel/hydration alert cue. Stronger pattern than run/walk cues so user
+// notices through pocket/armband.
+function fireFuelCue(alert) {
+  try {
+    if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 200]);
+  } catch {}
+  try {
+    if ('speechSynthesis' in window) {
+      const msg = alert.type === 'hydrate' ? 'Take a drink' : 'Time to fuel';
+      const u = new SpeechSynthesisUtterance(msg);
+      u.rate = 1.0;
       u.volume = 1.0;
       window.speechSynthesis.speak(u);
     }
@@ -1019,33 +1258,81 @@ function renderPre(root) {
       if (eta) goalEtaEl.textContent = '→ ' + eta;
       else goalEtaEl.textContent = '';
     }
+    // Fuel plan preview
+    const plan = node.querySelector('#fuel-plan-preview');
+    if (!plan) return;
+    if (goalType === 'none') {
+      plan.classList.add('hidden');
+      return;
+    }
+    const packKgNow = settings.units === 'metric'
+      ? (parseFloat(packInput.value) || 0)
+      : (parseFloat(packInput.value) || 0) / 2.20462;
+    let durationMs = null;
+    if (goalType === 'distance') {
+      durationMs = estimateGoalCompletionMs();
+    } else if (goalType === 'time') {
+      durationMs = goalTimeSec * 1000;
+    }
+    if (!durationMs) {
+      plan.classList.add('hidden');
+      return;
+    }
+    const est = fuelPlanEstimate({ durationMs, packKg: packKgNow });
+    plan.classList.remove('hidden');
+    const waterEl = node.querySelector('#fuel-plan-water');
+    const carbsEl = node.querySelector('#fuel-plan-carbs');
+    const notesEl = node.querySelector('#fuel-plan-notes');
+    if (settings.units === 'metric') {
+      waterEl.textContent = est.hydrationMl ? `${est.hydrationMl} ml` : '—';
+    } else {
+      waterEl.textContent = est.hydrationOz ? `${est.hydrationOz} oz` : '—';
+    }
+    carbsEl.textContent = est.carbsG ? `${est.carbsG} g carbs` : 'not needed (<60 min)';
+    if (est.notes) {
+      notesEl.textContent = est.notes;
+      notesEl.classList.remove('hidden');
+    } else {
+      notesEl.textContent = '';
+    }
+  }
+
+  function getEffectiveSecPerMi() {
+    const ratio = getDerivedRatio();
+    const targetSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
+    if (ratio && ratio.runSecs > 0 && ratio.walkSecs > 0) {
+      const walkSecPerMi = 18 * 60;
+      const totalSec = ratio.runSecs + ratio.walkSecs;
+      return (ratio.runSecs * targetSecPerMi + ratio.walkSecs * walkSecPerMi) / totalSec;
+    }
+    if (ratio && ratio.runSecs === 0) return 18 * 60;
+    return targetSecPerMi;
+  }
+
+  function estimateGoalCompletionMs() {
+    if (goalType !== 'distance') return null;
+    const effectiveSecPerMi = getEffectiveSecPerMi();
+    const distMi = goalDistM / 1609.344;
+    return distMi * effectiveSecPerMi * 1000;
+  }
+
+  function estimateGoalDistanceM() {
+    if (goalType !== 'time') return null;
+    const effectiveSecPerMi = getEffectiveSecPerMi();
+    const distMi = goalTimeSec / effectiveSecPerMi;
+    return distMi * 1609.344;
   }
 
   function estimateGoalCompletion() {
-    // Effective pace: when intervals are off, target pace is the pace.
-    // With intervals, walking segments slow the average. We assume walk
-    // pace ≈ 18:00/mi (3.3 mph), a realistic march pace.
-    const ratio = getDerivedRatio();
-    const targetSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
-    let effectiveSecPerMi = targetSecPerMi;
-    if (ratio && ratio.runSecs > 0 && ratio.walkSecs > 0) {
-      const walkSecPerMi = 18 * 60;
-      // Time-fraction average: weighted by phase duration
-      const totalSec = ratio.runSecs + ratio.walkSecs;
-      effectiveSecPerMi =
-        (ratio.runSecs * targetSecPerMi + ratio.walkSecs * walkSecPerMi) / totalSec;
-    } else if (ratio && ratio.runSecs === 0) {
-      // Walk-only
-      effectiveSecPerMi = 18 * 60;
-    }
     if (goalType === 'distance') {
-      const distMi = goalDistM / 1609.344;
-      const totalSec = distMi * effectiveSecPerMi;
-      return `ETA at this pace: ${formatMinSec(totalSec)}`;
+      const ms = estimateGoalCompletionMs();
+      if (ms == null) return null;
+      return `ETA at this pace: ${formatMinSec(ms / 1000)}`;
     }
     if (goalType === 'time') {
-      const distMi = goalTimeSec / effectiveSecPerMi;
-      const distInUnit = settings.units === 'metric' ? distMi * 1.609344 : distMi;
+      const m = estimateGoalDistanceM();
+      if (m == null) return null;
+      const distInUnit = settings.units === 'metric' ? m / 1000 : m / 1609.344;
       return `Expected distance: ${distInUnit.toFixed(2)} ${unitLabel().toLowerCase()}`;
     }
     return null;
@@ -1205,11 +1492,36 @@ function renderPre(root) {
         ? paceSecPerUnit * 1.609344
         : paceSecPerUnit;
     }
+
+    // Compute expected total duration: used by fuel coach and goal status.
+    let expectedDurationMs = null;
+    let expectedDistanceM = null;
     if (goalType === 'distance') {
       lw.goalDistM = goalDistM;
+      // Effective pace including walk segments for ETA.
+      const eta = estimateGoalCompletionMs();
+      expectedDurationMs = eta;
+      lw.targetTotalMs = eta;
     } else if (goalType === 'time') {
       lw.goalTimeMs = goalTimeSec * 1000;
+      expectedDurationMs = goalTimeSec * 1000;
+      expectedDistanceM = estimateGoalDistanceM();
+      lw.goalProjectedDistanceM = expectedDistanceM;
     }
+
+    // Fuel coach is enabled whenever there's any session expected to exceed
+    // 20 min (the hydration threshold). Always-on if pack ≥ 9 kg.
+    const shouldCoach = (expectedDurationMs && expectedDurationMs >= 20 * 60 * 1000)
+      || (packKg >= 9);
+    if (shouldCoach) {
+      lw.fuelCoach = new FuelCoach({
+        packKg, mode,
+        goalDistM: lw.goalDistM,
+        goalTimeMs: lw.goalTimeMs,
+        expectedDurationMs
+      });
+    }
+
     window.__liveWorkout = lw;
     lw.start();
     navigate('#/live');
@@ -1254,12 +1566,31 @@ function renderLive(root) {
   const goalFill = node.querySelector('#goal-progress-fill');
   const goalCurrentEl = node.querySelector('#goal-progress-current');
   const goalTargetEl = node.querySelector('#goal-progress-target');
-  const goalEtaEl = node.querySelector('#goal-progress-eta');
+  const goalStatusChip = node.querySelector('#goal-status-chip');
+  const requiredPaceHint = node.querySelector('#required-pace-hint');
+  const fuelAlertEl = node.querySelector('#fuel-alert');
+  const fuelAlertTitle = node.querySelector('#fuel-alert-title');
+  const fuelAlertDetail = node.querySelector('#fuel-alert-detail');
 
   if (live.mode !== 'ruck') {
     packStat.style.display = 'none';
   } else {
     packEl.textContent = Units.formatWeight(live.packWeightKg, settings.units);
+  }
+
+  // Fuel alert action handlers — wired once
+  node.querySelector('#fuel-done').addEventListener('click', () => {
+    live.ackFuel();
+    toast('Logged', 'success');
+  });
+  node.querySelector('#fuel-skip').addEventListener('click', () => {
+    live.dismissFuel();
+  });
+
+  function formatPaceSecPerUnit(secPerMi) {
+    if (!isFinite(secPerMi)) return '--:--';
+    const sec = settings.units === 'metric' ? secPerMi / 1.609344 : secPerMi;
+    return Units.formatPace(sec);
   }
 
   const update = () => {
@@ -1282,14 +1613,13 @@ function renderLive(root) {
       paceEl.textContent = '--:--';
     }
 
-    // Pace color cue: green within 10s/mi of target, amber slow, red very slow,
-    // blue if too fast (save energy advice).
+    // Pace color cue
     paceEl.classList.remove('on-target', 'slow', 'too-slow', 'too-fast');
     if (currentSecPerUnit != null && live.targetPaceSecPerMi != null) {
       const targetSec = settings.units === 'metric'
         ? live.targetPaceSecPerMi / 1.609344
         : live.targetPaceSecPerMi;
-      const diff = currentSecPerUnit - targetSec; // positive = slower
+      const diff = currentSecPerUnit - targetSec;
       if (diff > 30)        paceEl.classList.add('too-slow');
       else if (diff > 10)   paceEl.classList.add('slow');
       else if (diff < -15)  paceEl.classList.add('too-fast');
@@ -1303,7 +1633,7 @@ function renderLive(root) {
       gpsChip.textContent = '📡 ' + sig.toUpperCase();
     }
 
-    // Pacing banner — visible only if a plan is attached.
+    // Pacing banner
     if (live.pacingPlan && pacingBanner) {
       const result = live.pacingPlan.tick(live.elapsedMs, live.distanceM);
       pacingBanner.classList.remove('hidden');
@@ -1322,37 +1652,58 @@ function renderLive(root) {
       pacingBanner.classList.add('hidden');
     }
 
-    // Goal progress bar.
+    // Goal progress
     if ((live.goalDistM || live.goalTimeMs) && goalProgress) {
       goalProgress.classList.remove('hidden');
-      let pct, currentTxt, targetTxt, etaTxt;
+      let pct, currentTxt, targetTxt;
       if (live.goalDistM) {
         pct = Math.min(100, (live.distanceM / live.goalDistM) * 100);
         currentTxt = Units.formatDistance(live.distanceM, settings.units);
         targetTxt = Units.formatDistance(live.goalDistM, settings.units);
-        // ETA from current pace (rolling preferred)
-        if (currentSecPerUnit != null) {
-          const remainingM = Math.max(0, live.goalDistM - live.distanceM);
-          const remainingInUnit = settings.units === 'metric'
-            ? remainingM / 1000
-            : remainingM / 1609.344;
-          const remainSec = remainingInUnit * currentSecPerUnit;
-          etaTxt = 'ETA ' + formatMinSecLive(remainSec);
-        } else {
-          etaTxt = 'ETA --:--';
-        }
       } else {
         pct = Math.min(100, (live.elapsedMs / live.goalTimeMs) * 100);
         currentTxt = Units.formatDuration(live.elapsedMs);
         targetTxt = Units.formatDuration(live.goalTimeMs);
-        etaTxt = '';
       }
       goalFill.style.width = pct + '%';
       goalCurrentEl.textContent = currentTxt;
       goalTargetEl.textContent = targetTxt;
-      goalEtaEl.textContent = etaTxt;
+
+      // Goal status chip
+      const currentSecPerMi = currentSecPerUnit
+        ? (settings.units === 'metric' ? currentSecPerUnit * 1.609344 : currentSecPerUnit)
+        : null;
+      const status = live.getGoalStatus(currentSecPerMi);
+      goalStatusChip.classList.remove('on-track', 'ahead', 'behind');
+      if (status) {
+        goalStatusChip.classList.add(status);
+        goalStatusChip.textContent = status === 'on-track' ? 'ON TRACK'
+          : status === 'ahead' ? 'AHEAD' : 'BEHIND';
+      } else {
+        goalStatusChip.textContent = '';
+      }
+
+      // Required pace hint (only when behind & we have enough data)
+      const req = live.getRequiredPaceSecPerMi();
+      if (req != null && status === 'behind' && currentSecPerMi != null) {
+        requiredPaceHint.classList.remove('hidden');
+        const isUrgent = req < currentSecPerMi - 60;
+        requiredPaceHint.classList.toggle('urgent', isUrgent);
+        requiredPaceHint.textContent = 'Run ' + formatPaceSecPerUnit(req) + ' to recover';
+      } else {
+        requiredPaceHint.classList.add('hidden');
+      }
     } else if (goalProgress) {
       goalProgress.classList.add('hidden');
+    }
+
+    // Fuel/hydration alert
+    if (live.pendingFuelAlert && fuelAlertEl) {
+      fuelAlertEl.classList.remove('hidden');
+      fuelAlertTitle.textContent = live.pendingFuelAlert.title;
+      fuelAlertDetail.textContent = live.pendingFuelAlert.text;
+    } else if (fuelAlertEl) {
+      fuelAlertEl.classList.add('hidden');
     }
   };
 
