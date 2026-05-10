@@ -16,7 +16,7 @@ const STATIONARY_TIMEOUT_MS = 15000;
 // These gates filter out the common noise sources that cause two phones
 // recording side-by-side to disagree (drift, accuracy-radius bounce, jumps).
 const SPEED_JUMP_MAX_M_S    = 12;    // ~27 mph; reject anything above as a GPS jump
-const ACCURACY_NOISE_K      = 1.5;   // movement must exceed K × accuracy to count
+const ACCURACY_NOISE_K      = 1.2;   // movement must exceed K × accuracy to count
 const SMOOTHING_ALPHA       = 0.5;   // EMA on accepted positions; 1.0 = no smoothing
 const ROLLING_PACE_WINDOW_MS = 30000; // 30s rolling window for "current pace"
 const MIN_DISTANCE_FOR_PACE_M = 20;   // need this much before reporting pace
@@ -242,6 +242,7 @@ class LiveWorkout {
     this.wakeLock = null;
     this.autoPaused = false;
     this.rollingBuffer = []; // [{ t, dist }] for current-pace window
+    this.phaseBuffer = [];   // [{ t, dist, phase }] reset on phase change
     this.pacingPlan = null;  // optional PacingPlan
     this.currentPhase = null; // 'run' | 'walk' | null
     this.goalDistM = null;    // optional, meters
@@ -252,7 +253,10 @@ class LiveWorkout {
     this.fuelCoach = null;   // optional FuelCoach
     this.pendingFuelAlert = null; // mirrored for renderer
     this.compensatedPauseMs = 0;     // total time absorbed by self-heal
-    this.filterStats = { accepted: 0, rejAccuracy: 0, rejJump: 0, rejNoise: 0, rejDrift: 0 };
+    this.firstFixes = 0;     // count fixes during cold-start period
+    this.lastFixWallTime = null; // for GPS dropout detection
+    this.gpsLostSince = null;
+    this.filterStats = { accepted: 0, rejAccuracy: 0, rejJump: 0, rejNoise: 0, rejDrift: 0, rejColdStart: 0 };
   }
 
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -261,6 +265,16 @@ class LiveWorkout {
   async start() {
     await this.acquireWakeLock();
     this.tickHandle = setInterval(() => this.tick(), 1000);
+
+    // Wake locks are dropped when the tab is backgrounded. Re-acquire on
+    // return so the screen stays on for the next foreground session.
+    this._visHandler = () => {
+      if (document.visibilityState === 'visible' && this.status === 'running' && !this.wakeLock) {
+        this.acquireWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', this._visHandler);
+
     if ('geolocation' in navigator) {
       this.watchId = navigator.geolocation.watchPosition(
         (pos) => this.onPosition(pos),
@@ -282,10 +296,9 @@ class LiveWorkout {
 
   onPosition(pos) {
     const { latitude, longitude, accuracy } = pos.coords;
-    // Prefer the fix's own timestamp; some browsers deliver it as the time
-    // the chip produced the fix, which is more accurate than wall-clock at
-    // callback time (which has unbounded processing latency).
+    // Prefer the fix's own timestamp.
     const now = pos.timestamp || Date.now();
+    const wallNow = Date.now();
 
     // Update GPS signal indicator regardless of acceptance.
     if (accuracy == null) {
@@ -295,7 +308,13 @@ class LiveWorkout {
     }
     this.gpsSignal = accuracy < 15 ? 'strong' : accuracy < 30 ? 'fair' : 'searching';
 
-    // GATE 0: accuracy floor — discard junk fixes outright.
+    // Detect signal-restored: if we'd marked gpsLostSince, clear it.
+    if (this.gpsLostSince) {
+      this.gpsLostSince = null;
+    }
+    this.lastFixWallTime = wallNow;
+
+    // GATE 0: accuracy floor.
     if (accuracy > MIN_ACCURACY_M) {
       this.filterStats.rejAccuracy++;
       this.emit();
@@ -304,21 +323,32 @@ class LiveWorkout {
 
     const rawFix = { lat: latitude, lon: longitude, t: now, acc: accuracy };
 
-    // First valid fix — seed the filter, do not add distance yet.
-    if (!this.lastFix) {
+    // COLD START: GPS chips frequently emit one or two terrible first fixes
+    // before settling. Skip the first 2 accepted fixes — use them to seed
+    // the filter state without recording distance. Strava and Garmin both
+    // do this. The user sees a brief "warming up" before recording begins.
+    if (this.firstFixes < 2) {
+      if (!this.lastFix || this.lastFix.acc > accuracy) {
+        this.lastFix = rawFix;
+        this.lastPoint = { ...rawFix };
+      }
+      this.firstFixes++;
+      this.filterStats.rejColdStart++;
+      this.emit();
+      return;
+    }
+
+    // First *recorded* fix (after cold-start): re-seed and start the route.
+    if (!this.lastPoint || this.points.length === 0) {
       this.lastFix = rawFix;
-      const seed = { lat: latitude, lon: longitude, t: now, acc: accuracy };
-      this.lastPoint = seed;
-      this.points.push(seed);
+      this.lastPoint = { ...rawFix };
+      this.points.push({ ...rawFix });
       this.filterStats.accepted++;
       this.emit();
       return;
     }
 
     if (this.status !== 'running') {
-      // Paused: don't accumulate distance, but keep timestamp current so the
-      // next-after-resume delta uses the right dt.
-      this.lastFix = { ...this.lastFix, t: now };
       this.emit();
       return;
     }
@@ -327,44 +357,52 @@ class LiveWorkout {
     const dt = (now - this.lastFix.t) / 1000;
     const impliedSpeed = dt > 0 ? rawD / dt : 0;
 
-    // GATE 1: implausible speed jump — likely GPS teleport.
+    // GATE 1: speed jump.
     if (impliedSpeed > SPEED_JUMP_MAX_M_S) {
       this.filterStats.rejJump++;
-      // Don't update lastFix — wait for a believable fix.
       this.emit();
       return;
     }
 
-    // GATE 2: movement within combined accuracy circle — noise, not motion.
-    // This is the gate that fixes cross-device drift: a fix 8m away when both
-    // fixes have 10m accuracy is statistically indistinguishable from standing
-    // still, even though it implies > 0.5 m/s.
+    // GATE 2: noise floor — accuracy-aware.
     const noiseFloor = ACCURACY_NOISE_K * Math.max(accuracy, this.lastFix.acc);
     if (rawD < noiseFloor) {
       this.filterStats.rejNoise++;
-      // CRITICAL: do NOT touch lastFix. The next fix needs to compute its
-      // implied speed from the last *accepted* fix's time, not from the
-      // last *seen* fix's time, or it'll look like an artificial jump.
       this.emit();
       return;
     }
 
-    // GATE 3: drift while auto-paused — even if movement passes noise floor,
-    // if we've already detected stationary and speed is low, reject.
+    // GATE 3: drift while auto-paused.
     if (this.autoPaused && impliedSpeed < STATIONARY_M_PER_S * 2) {
       this.filterStats.rejDrift++;
-      // Same reason as GATE 2: don't touch lastFix.
       this.emit();
       return;
     }
 
-    // Apply exponential smoothing on position. This dampens GPS chatter
-    // without losing real motion (alpha=0.5 means 50% weight on new fix).
-    const smoothLat = this.lastPoint.lat * (1 - SMOOTHING_ALPHA) + latitude * SMOOTHING_ALPHA;
-    const smoothLon = this.lastPoint.lon * (1 - SMOOTHING_ALPHA) + longitude * SMOOTHING_ALPHA;
+    // GATE 4: GPS dropout recovery — if last accepted fix was > 10s ago,
+    // we can't trust the direct line between then and now (might've gone
+    // around a corner). Don't accumulate the gap distance; just re-seed.
+    if (dt > 10) {
+      this.lastFix = rawFix;
+      this.lastPoint = { ...rawFix };
+      this.points.push({ ...rawFix });
+      this.filterStats.accepted++;
+      this.emit();
+      return;
+    }
+
+    // Accuracy-weighted smoothing. The weighting reflects how much to trust
+    // the new fix vs the previous accepted point. With equal accuracies, alpha
+    // = 0.5 (50/50 blend). When the new fix is more accurate, alpha goes up
+    // (lean new). When less accurate, alpha drops (lean old). We deliberately
+    // do NOT track posterior accuracy — without process noise it shrinks
+    // unboundedly and over-smooths real motion.
+    const prevAcc = this.lastFix.acc;
+    const alpha = (prevAcc * prevAcc) / (prevAcc * prevAcc + accuracy * accuracy);
+    const smoothLat = this.lastPoint.lat * (1 - alpha) + latitude * alpha;
+    const smoothLon = this.lastPoint.lon * (1 - alpha) + longitude * alpha;
     const smoothed = { lat: smoothLat, lon: smoothLon, t: now, acc: accuracy };
 
-    // Distance from previous smoothed point to new smoothed point.
     const d = haversine(this.lastPoint, smoothed);
     this.distanceM += d;
     this.lastPoint = smoothed;
@@ -373,20 +411,47 @@ class LiveWorkout {
     this.lastMoveAt = now;
     this.filterStats.accepted++;
 
-    // Rolling pace buffer for "current pace" (last 30s).
+    // Rolling pace buffer (cross-phase, 30s window).
     this.rollingBuffer.push({ t: now, dist: this.distanceM });
     while (this.rollingBuffer.length > 1 &&
            now - this.rollingBuffer[0].t > ROLLING_PACE_WINDOW_MS) {
       this.rollingBuffer.shift();
     }
 
+    // Per-phase buffer for run/walk pace display. Reset on phase change.
+    this.phaseBuffer.push({ t: now, dist: this.distanceM, phase: this.currentPhase });
+
     if (this.autoPaused) {
-      // We're moving again — un-pause.
       this.autoPaused = false;
       this.status = 'running';
     }
 
     this.emit();
+  }
+
+  // Returns seconds-per-unit using current-phase samples only. Useful for
+  // "what pace am I actually running during the RUN phase?" — independent
+  // of the walk segments that drag the overall rolling pace.
+  getPhasePaceSecPerUnit(units) {
+    if (!this.currentPhase || this.phaseBuffer.length < 2) return null;
+    // Use only samples from the current phase
+    const samples = this.phaseBuffer.filter(s => s.phase === this.currentPhase);
+    if (samples.length < 2) return null;
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    const dt = (last.t - first.t) / 1000;
+    const dd = last.dist - first.dist;
+    if (dd < MIN_DISTANCE_FOR_PACE_M / 2 || dt < 3) return null;
+    const speed = dd / dt;
+    if (speed < 0.05) return null;
+    return units === 'metric' ? 1000 / speed : 1609.344 / speed;
+  }
+
+  // Watchdog: returns true if no fix has arrived in WALL TIME longer than
+  // the timeout. Used by the live screen to surface a "signal lost" banner.
+  isGpsLost() {
+    if (!this.lastFixWallTime) return false;
+    return Date.now() - this.lastFixWallTime > 15000;
   }
 
   // Returns seconds-per-unit using the recent rolling window, or null.
@@ -424,6 +489,8 @@ class LiveWorkout {
         const result = this.pacingPlan.tick(this.elapsedMs, this.distanceM);
         if (result.phase !== this.currentPhase) {
           this.currentPhase = result.phase;
+          // Reset per-phase pace buffer so we measure pace within this phase.
+          this.phaseBuffer = [];
           fireCue(result.phase);
         }
       }
@@ -556,6 +623,10 @@ class LiveWorkout {
       clearInterval(this.tickHandle);
       this.tickHandle = null;
     }
+    if (this._visHandler) {
+      document.removeEventListener('visibilitychange', this._visHandler);
+      this._visHandler = null;
+    }
     if (this.wakeLock) {
       try { await this.wakeLock.release(); } catch {}
       this.wakeLock = null;
@@ -681,20 +752,31 @@ function injuryRiskWarning(method, paceSecPerMi, packLbs) {
 }
 
 class PacingPlan {
-  // mode: 'time' (run/walk by seconds) — both Galloway and Tactical use time.
-  constructor({ runSecs, walkSecs }) {
+  // runPaceSecPerMi, walkPaceSecPerMi: target paces to show in the live banner.
+  // Defaults: walk pace ~18:00/mi (3.3 mph, brisk walk); run pace must be set.
+  constructor({ runSecs, walkSecs, runPaceSecPerMi, walkPaceSecPerMi }) {
     this.runSecs = Math.max(0, runSecs || 0);
     this.walkSecs = Math.max(0, walkSecs || 0);
+    this.runPaceSecPerMi = runPaceSecPerMi || null;
+    this.walkPaceSecPerMi = walkPaceSecPerMi || 18 * 60;
   }
 
-  // Returns { phase, remainingMs, phaseLengthMs }
   tick(elapsedMs /*, distM */) {
     if (this.runSecs === 0) {
-      // Walk-only mode (e.g. heavy pack).
-      return { phase: 'walk', remainingMs: 0, phaseLengthMs: this.walkSecs * 1000 };
+      return {
+        phase: 'walk',
+        remainingMs: 0,
+        phaseLengthMs: this.walkSecs * 1000,
+        targetSecPerMi: this.walkPaceSecPerMi
+      };
     }
     if (this.walkSecs === 0) {
-      return { phase: 'run', remainingMs: 0, phaseLengthMs: this.runSecs * 1000 };
+      return {
+        phase: 'run',
+        remainingMs: 0,
+        phaseLengthMs: this.runSecs * 1000,
+        targetSecPerMi: this.runPaceSecPerMi
+      };
     }
     const cycleMs = (this.runSecs + this.walkSecs) * 1000;
     const intoCycle = elapsedMs % cycleMs;
@@ -703,13 +785,15 @@ class PacingPlan {
       return {
         phase: 'run',
         remainingMs: runMs - intoCycle,
-        phaseLengthMs: runMs
+        phaseLengthMs: runMs,
+        targetSecPerMi: this.runPaceSecPerMi
       };
     }
     return {
       phase: 'walk',
       remainingMs: cycleMs - intoCycle,
-      phaseLengthMs: this.walkSecs * 1000
+      phaseLengthMs: this.walkSecs * 1000,
+      targetSecPerMi: this.walkPaceSecPerMi
     };
   }
 }
@@ -1485,7 +1569,18 @@ function renderPre(root) {
     const lw = new LiveWorkout({ mode, packWeightKg: packKg });
     const ratio = getDerivedRatio();
     if (ratio && (ratio.runSecs > 0 || ratio.walkSecs > 0)) {
-      lw.pacingPlan = new PacingPlan({ runSecs: ratio.runSecs, walkSecs: ratio.walkSecs });
+      // Per-method walk pace: tactical is brisk (17:00/mi); Galloway and
+      // custom default to 18:00/mi (3.3 mph). Run pace = user's target.
+      const runPaceSecPerMi = settings.units === 'metric'
+        ? paceSecPerUnit * 1.609344
+        : paceSecPerUnit;
+      const walkPaceSecPerMi = method === 'tactical' ? 17 * 60 : 18 * 60;
+      lw.pacingPlan = new PacingPlan({
+        runSecs: ratio.runSecs,
+        walkSecs: ratio.walkSecs,
+        runPaceSecPerMi,
+        walkPaceSecPerMi
+      });
     }
     if (method !== 'off') {
       lw.targetPaceSecPerMi = settings.units === 'metric'
@@ -1648,8 +1743,44 @@ function renderLive(root) {
       } else {
         pacingRemainingEl.textContent = '';
       }
+
+      // Target + current pace for THIS phase.
+      const pacingTargetEl = node.querySelector('#pacing-target');
+      const pacingCurrentEl = node.querySelector('#pacing-current');
+      if (pacingTargetEl && pacingCurrentEl) {
+        if (result.targetSecPerMi) {
+          pacingTargetEl.textContent = 'target ' + formatPaceSecPerUnit(result.targetSecPerMi);
+        } else {
+          pacingTargetEl.textContent = '';
+        }
+        const phasePace = live.getPhasePaceSecPerUnit(settings.units);
+        if (phasePace != null) {
+          pacingCurrentEl.textContent = 'current ' + Units.formatPace(phasePace);
+          // Color by phase pace vs target
+          pacingCurrentEl.classList.remove('on-target', 'slow', 'too-slow', 'too-fast');
+          if (result.targetSecPerMi) {
+            const targetSecPerUnit = settings.units === 'metric'
+              ? result.targetSecPerMi / 1.609344
+              : result.targetSecPerMi;
+            const diff = phasePace - targetSecPerUnit;
+            if      (diff >  30) pacingCurrentEl.classList.add('too-slow');
+            else if (diff >  10) pacingCurrentEl.classList.add('slow');
+            else if (diff < -15) pacingCurrentEl.classList.add('too-fast');
+            else                 pacingCurrentEl.classList.add('on-target');
+          }
+        } else {
+          pacingCurrentEl.textContent = 'current --:--';
+          pacingCurrentEl.classList.remove('on-target', 'slow', 'too-slow', 'too-fast');
+        }
+      }
     } else if (pacingBanner) {
       pacingBanner.classList.add('hidden');
+    }
+
+    // GPS lost watchdog: show in chip if no fix for > 15s.
+    if (live.isGpsLost() && gpsChip) {
+      gpsChip.className = 'gps-chip lost';
+      gpsChip.textContent = '⚠ SIGNAL LOST';
     }
 
     // Goal progress

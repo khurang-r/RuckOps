@@ -643,6 +643,16 @@ body {
 
 .gps-chip.strong { color: var(--olive); }
 .gps-chip.fair { color: var(--amber); }
+.gps-chip.lost {
+  color: var(--danger);
+  background: rgba(220, 38, 38, 0.15);
+  animation: gps-lost-pulse 1s ease-in-out infinite;
+}
+
+@keyframes gps-lost-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
 
 .icon-btn {
   background: var(--surface);
@@ -1209,14 +1219,37 @@ select {
 
 .pacing-banner {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 4px;
   padding: 12px 16px;
   border-radius: 8px;
   background: var(--surface);
   border-left: 4px solid var(--olive);
   margin: 4px 0;
 }
+
+.pacing-banner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pacing-banner-row.paces {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.pacing-target,
+.pacing-current {
+  display: inline-block;
+}
+
+.pacing-current.on-target { color: var(--olive); }
+.pacing-current.slow      { color: var(--amber); }
+.pacing-current.too-slow  { color: var(--danger); }
+.pacing-current.too-fast  { color: #5b8db3; }
 
 .pacing-banner.run {
   border-left-color: var(--olive);
