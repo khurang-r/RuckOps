@@ -1244,3 +1244,145 @@ select {
   font-size: 18px;
   color: var(--text);
 }
+
+/* Pace + custom + goal configurators ----------------------------------- */
+
+.pace-config,
+.custom-config,
+.goal-config {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pace-value,
+.goal-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  color: var(--amber);
+  font-size: 44px;
+}
+
+.pace-derived,
+.goal-eta {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--olive);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  margin: 0;
+}
+
+.stepper-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stepper-btn.small {
+  flex: 0 0 56px;
+  height: 56px;
+  font-size: 28px;
+}
+
+.stepper-display.small {
+  height: 56px;
+}
+
+.stepper-display.small span {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 28px;
+  color: var(--amber);
+}
+
+/* Injury warning ------------------------------------------------------- */
+
+.injury-warning {
+  background: rgba(220, 38, 38, 0.1);
+  border-left: 4px solid var(--danger);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border-radius: 4px;
+  margin: 0;
+}
+
+.injury-warning.caution {
+  background: rgba(244, 129, 31, 0.1);
+  border-left-color: var(--amber);
+}
+
+/* Goal section --------------------------------------------------------- */
+
+.goal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goal-options {
+  display: flex;
+  gap: 8px;
+}
+
+.goal-opt {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid #2a2d2a;
+  color: var(--text);
+  padding: 12px;
+  border-radius: 6px;
+  font-family: 'Roboto Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  cursor: pointer;
+  min-height: 48px;
+}
+
+.goal-opt:active { background: #2a2d2a; }
+
+.goal-opt.selected {
+  border-color: var(--amber);
+  background: rgba(244, 129, 31, 0.1);
+  color: var(--amber);
+}
+
+/* Live screen — goal progress + pace color cue ------------------------- */
+
+.goal-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px;
+  margin-top: -8px;
+}
+
+.goal-progress-bar {
+  height: 6px;
+  background: #1a1d1a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.goal-progress-fill {
+  height: 100%;
+  background: var(--amber);
+  width: 0%;
+  transition: width 0.5s ease;
+}
+
+.goal-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.sub-stat .val.on-target { color: var(--olive); }
+.sub-stat .val.slow      { color: var(--amber); }
+.sub-stat .val.too-slow  { color: var(--danger); }
+.sub-stat .val.too-fast  { color: #5b8db3; }
