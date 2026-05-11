@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20260511" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet" />
 </head>
@@ -400,9 +400,10 @@
       <section class="panel">
         <h3 class="panel-title">DATA</h3>
         <button class="btn btn-outline" id="export-csv">EXPORT CSV</button>
+        <button class="btn btn-outline" id="force-update">FORCE UPDATE</button>
         <button class="btn btn-text danger" id="reset-app">RESET ALL DATA</button>
       </section>
-      <p class="muted small">v0.1 · web MVP · <a href="#" id="about-link">about</a></p>
+      <p class="muted small">v0.3 · 2026-05-11 · web MVP · <a href="#" id="about-link">about</a></p>
       <nav class="tabbar">
         <a href="#/home" class="tab">HOME</a>
         <a href="#/history" class="tab">HISTORY</a>
@@ -413,6 +414,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="app.js" type="module"></script>
+  <script src="app.js?v=20260511" type="module"></script>
 </body>
 </html>

@@ -2234,6 +2234,39 @@ function renderProfile(root) {
     setTimeout(() => location.hash = '#/welcome', 600);
   });
 
+  // Force update: unregister the service worker + clear caches, then
+  // reload bypassing the SW. The next load fetches everything fresh.
+  // Workout history and settings are preserved (they live in localStorage,
+  // not in the SW cache).
+  node.querySelector('#force-update').addEventListener('click', async () => {
+    const ok = await showConfirm({
+      title: 'Force update?',
+      message: 'Clears the cached app shell and reloads to fetch the latest version. Your workout history and settings stay intact.',
+      confirmLabel: 'UPDATE',
+      cancelLabel: 'CANCEL'
+    });
+    if (!ok) return;
+    toast('Updating…', 'info');
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch (e) {
+      console.error('force-update cleanup failed', e);
+    }
+    // Hard reload: add cache-buster + use location.reload(true) for older browsers.
+    setTimeout(() => {
+      const url = new URL(location.href);
+      url.searchParams.set('_t', Date.now());
+      location.replace(url.toString());
+    }, 400);
+  });
+
   node.querySelector('#about-link').addEventListener('click', (e) => {
     e.preventDefault();
     alert('RuckOps web MVP v0.1\n\nForeground GPS tracking. Local-only data. No account, no cloud.\n\nSee README on GitHub for the full project plan and v2 roadmap.');
@@ -2244,8 +2277,30 @@ function renderProfile(root) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // Use relative path so it works under any GitHub Pages base path.
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // Check for updates on each load. If a new SW is found, install it
+      // in the background. When it takes control (controllerchange), reload
+      // once so the user gets the latest UI.
+      reg.update().catch(() => {});
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // A newer SW has installed and an old one was controlling the
+            // page. Tell the new one to take over.
+            newWorker.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+      // Reload once when the new SW takes control.
+      let reloading = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (reloading) return;
+        reloading = true;
+        location.reload();
+      });
+    }).catch(() => {});
   });
 }
 
