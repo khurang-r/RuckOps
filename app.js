@@ -7,6 +7,7 @@ const SETTINGS_KEY = 'ruckops.settings';
 const WORKOUTS_KEY = 'ruckops.workouts';
 const DRAFT_KEY    = 'ruckops.draft';     // intent-persist on perm denial (X.2)
 const ONBOARD_KEY  = 'ruckops.onboarded';
+const PROFILE_KEY  = 'ruckops.profile';   // calibrated user model (HR zones, paces)
 
 const MIN_ACCURACY_M = 50;       // accept fixes only if better than 50m
 const STATIONARY_M_PER_S = 0.5;  // ~1.1 mph; below this == auto-pause
@@ -17,9 +18,175 @@ const STATIONARY_TIMEOUT_MS = 15000;
 // recording side-by-side to disagree (drift, accuracy-radius bounce, jumps).
 const SPEED_JUMP_MAX_M_S    = 12;    // ~27 mph; reject anything above as a GPS jump
 const ACCURACY_NOISE_K      = 1.2;   // movement must exceed K × accuracy to count
-const SMOOTHING_ALPHA       = 0.5;   // EMA on accepted positions; 1.0 = no smoothing
+const SMOOTHING_ALPHA       = 0.5;   // legacy EMA, now superseded by Kalman
 const ROLLING_PACE_WINDOW_MS = 30000; // 30s rolling window for "current pace"
 const MIN_DISTANCE_FOR_PACE_M = 20;   // need this much before reporting pace
+
+// -- Kalman GPS filter --------------------------------------------------
+// 4-state Kalman filter for GPS smoothing. State: [lat, lon, vLat, vLon].
+// Process model: constant-velocity (acceleration is process noise).
+// Measurement model: position-only (we don't get velocity directly from
+// the Geolocation API, even though some devices report `speed`).
+//
+// This is materially better than the prior EMA blending for three reasons:
+// 1. Velocity persistence: when a fix is poor, predicted position from
+//    prior velocity is used — so dropouts don't shrink distance.
+// 2. Adaptive noise: measurement noise = accuracy², so the filter
+//    naturally trusts good fixes and ignores bad ones.
+// 3. Bounded posterior: covariance grows during gaps, shrinks when good
+//    fixes arrive — no unbounded over-smoothing like a pure EMA.
+//
+// Local Cartesian projection: we work in meters relative to the first fix.
+// At human-walking distances (≤ a few km), the curvature error is tiny
+// (< 0.1%) — and it lets us treat lat/lon as a Euclidean plane for the
+// linear algebra, which is what the filter needs.
+
+class KalmanGPS {
+  constructor() {
+    // State vector [x, y, vx, vy] in meters and m/s, relative to origin.
+    this.x = 0; this.y = 0; this.vx = 0; this.vy = 0;
+    // Covariance matrix P (4x4) — start very uncertain.
+    this.P = [
+      [1e6, 0,   0,   0],
+      [0,   1e6, 0,   0],
+      [0,   0,   1e4, 0],
+      [0,   0,   0,   1e4]
+    ];
+    // Process noise — how much we expect velocity to change per second.
+    // Higher = trusts measurements more, less smoothing. Tuned for walking/
+    // running where velocity changes gradually but real accelerations happen.
+    this.processVelNoise = 1.5;   // m/s² stdev per sec — calibrated for human running
+
+    // Origin for the local Cartesian projection.
+    this.originLat = null;
+    this.originLon = null;
+    this.metersPerDegLat = 111320;
+    this.metersPerDegLon = 111320;
+    this.lastT = null;
+    this.initialized = false;
+  }
+
+  // Convert (lat, lon) to (x, y) in meters relative to origin.
+  _toLocal(lat, lon) {
+    if (!this.initialized) {
+      this.originLat = lat;
+      this.originLon = lon;
+      this.metersPerDegLon = 111320 * Math.cos(lat * Math.PI / 180);
+    }
+    return {
+      x: (lon - this.originLon) * this.metersPerDegLon,
+      y: (lat - this.originLat) * this.metersPerDegLat
+    };
+  }
+
+  // Convert (x, y) back to (lat, lon)
+  _toLatLon(x, y) {
+    return {
+      lat: this.originLat + (y / this.metersPerDegLat),
+      lon: this.originLon + (x / this.metersPerDegLon)
+    };
+  }
+
+  // Take a measurement: (lat, lon, accuracy_m, timestamp_ms). Returns the
+  // filtered estimate { lat, lon, vx, vy, speed }.
+  update(lat, lon, accuracy, timestampMs) {
+    if (!this.initialized) {
+      const { x, y } = this._toLocal(lat, lon);
+      this.x = x; this.y = y;
+      this.vx = 0; this.vy = 0;
+      this.lastT = timestampMs;
+      this.initialized = true;
+      // Set initial measurement covariance
+      this.P[0][0] = accuracy * accuracy;
+      this.P[1][1] = accuracy * accuracy;
+      return { lat, lon, vx: 0, vy: 0, speed: 0 };
+    }
+
+    const dtSec = Math.max(0.001, (timestampMs - this.lastT) / 1000);
+    this.lastT = timestampMs;
+
+    // -- PREDICT step --
+    // State: x' = x + vx*dt
+    this.x += this.vx * dtSec;
+    this.y += this.vy * dtSec;
+    // Covariance update: P = F·P·Fᵀ + Q
+    // For constant-velocity model, F = [[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]]
+    // We do the 4x4 matrix math inline. Q is process noise.
+    const dt = dtSec;
+    const dt2 = dt * dt;
+    const dt3 = dt2 * dt;
+    const dt4 = dt2 * dt2;
+    const sigma2 = this.processVelNoise * this.processVelNoise;
+    // Q for constant-acceleration process noise model
+    const q11 = dt4 / 4 * sigma2;
+    const q13 = dt3 / 2 * sigma2;
+    const q33 = dt2 * sigma2;
+    // Apply F P Fᵀ in-place for the cross terms only; diagonal updates:
+    const P = this.P;
+    // P[0][0] += dt*(P[0][2] + P[2][0]) + dt²*P[2][2]  (similarly for P[1][1])
+    const new00 = P[0][0] + dt * (P[0][2] + P[2][0]) + dt2 * P[2][2];
+    const new11 = P[1][1] + dt * (P[1][3] + P[3][1]) + dt2 * P[3][3];
+    const new02 = P[0][2] + dt * P[2][2];
+    const new13 = P[1][3] + dt * P[3][3];
+    P[0][0] = new00 + q11;
+    P[1][1] = new11 + q11;
+    P[2][2] = P[2][2] + q33;
+    P[3][3] = P[3][3] + q33;
+    P[0][2] = new02 + q13;
+    P[2][0] = new02 + q13;
+    P[1][3] = new13 + q13;
+    P[3][1] = new13 + q13;
+
+    // -- UPDATE step --
+    // Convert measurement to local coords
+    const { x: zx, y: zy } = this._toLocal(lat, lon);
+    // Measurement matrix H = [[1,0,0,0],[0,1,0,0]] — we observe x and y.
+    // Innovation y = z - Hx
+    const innovX = zx - this.x;
+    const innovY = zy - this.y;
+    // Measurement noise R. We use accuracy² as a per-axis stdev.
+    const R = accuracy * accuracy;
+    // Innovation covariance S = HPHᵀ + R (scalar per axis for our diagonal-ish R)
+    const Sx = P[0][0] + R;
+    const Sy = P[1][1] + R;
+    // Kalman gain K = PHᵀS⁻¹ — for our H, the relevant columns are P's
+    // first two columns. K is 4x2:
+    const kx0 = P[0][0] / Sx, kx2 = P[2][0] / Sx;
+    const ky1 = P[1][1] / Sy, ky3 = P[3][1] / Sy;
+    // State update: x += K * innov
+    this.x += kx0 * innovX;
+    this.vx += kx2 * innovX;
+    this.y += ky1 * innovY;
+    this.vy += ky3 * innovY;
+    // Covariance update: P -= K·H·P  — simplifies because of our H.
+    P[0][0] -= kx0 * P[0][0];
+    P[0][2] -= kx0 * P[0][2];
+    P[2][0] -= kx2 * P[0][0];
+    P[2][2] -= kx2 * P[0][2];
+    P[1][1] -= ky1 * P[1][1];
+    P[1][3] -= ky1 * P[1][3];
+    P[3][1] -= ky3 * P[1][1];
+    P[3][3] -= ky3 * P[1][3];
+
+    const out = this._toLatLon(this.x, this.y);
+    const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+    return { lat: out.lat, lon: out.lon, vx: this.vx, vy: this.vy, speed };
+  }
+
+  // Get filter confidence (position stdev in meters). Used for "GPS quality" display.
+  positionStdev() {
+    if (!this.initialized) return Infinity;
+    return Math.sqrt((this.P[0][0] + this.P[1][1]) / 2);
+  }
+
+  reset() {
+    this.initialized = false;
+    this.x = 0; this.y = 0; this.vx = 0; this.vy = 0;
+    this.originLat = null;
+    this.originLon = null;
+    this.lastT = null;
+  }
+}
 
 // -- Storage ------------------------------------------------------------
 
@@ -64,6 +231,330 @@ function loadSettings() {
 
 function saveSettings(s) {
   Storage.set(SETTINGS_KEY, s);
+}
+
+// -- User profile -------------------------------------------------------
+// The calibrated user model. Populated from the onboarding calibration
+// session (1mi time trial) and updated automatically as the user completes
+// workouts. Drives personalized pace recommendations across every interval
+// mode in the app.
+
+function defaultProfile() {
+  return {
+    schemaVersion: 1,
+    // From calibration:
+    miTrialPaceSecPerMi: null,    // their actual 1-mile pace, seconds
+    miTrialAt: null,               // ISO timestamp
+    // Derived (sport-science models, see comments below):
+    vVO2maxSecPerMi: null,         // pace at VO2max
+    thresholdSecPerMi: null,        // lactate threshold ~88% vVO2max
+    easySecPerMi: null,             // easy/aerobic base pace
+    marathonSecPerMi: null,         // estimated marathon pace
+    // HR (filled if HR strap paired):
+    hrMax: null,                   // user-entered or measured max
+    hrRest: null,                  // user-entered resting HR
+    zones: null,                   // {z1: [lo,hi], z2:..., z5:...} Karvonen
+    // Demographics for fallback estimates:
+    age: null,
+    sex: null,                     // 'm'|'f'|null
+    // Experience:
+    runsPerWeek: null,             // self-reported
+    yearsExperience: null,
+    // Stats accumulated from workouts:
+    totalWorkouts: 0,
+    totalDistanceM: 0,
+    totalDurationMs: 0,
+    avgRpe: null,                  // running avg of post-workout RPE
+    // Adaptive: actual walk pace observed during run-walk sessions
+    observedWalkPaceSecPerMi: null,
+    lastUpdated: null
+  };
+}
+
+function loadProfile() {
+  return { ...defaultProfile(), ...Storage.get(PROFILE_KEY, {}) };
+}
+
+function saveProfile(p) {
+  p.lastUpdated = new Date().toISOString();
+  Storage.set(PROFILE_KEY, p);
+}
+
+// Derive training paces from a 1-mile time trial.
+// Method: 1mi all-out pace ≈ 95% of vVO2max for trained, ≈ 92% for untrained.
+// We use 93% as a generic middle. From vVO2max, derive other zones using
+// Daniels' Running Formula percentages.
+function derivePacesFromMileTrial(miTrialSecPerMi, runsPerWeek = 3) {
+  // Trained athletes pace 1mi closer to vVO2max; beginners further from it.
+  const vVO2maxPct = runsPerWeek >= 4 ? 0.95 : runsPerWeek >= 2 ? 0.93 : 0.90;
+  const vVO2maxSecPerMi = miTrialSecPerMi / vVO2maxPct;
+
+  // Daniels' Running Formula percentages of vVO2max:
+  // - Easy (E):     ~74% — recovery/base
+  // - Marathon (M): ~83% — sustainable for ~2-4hrs
+  // - Threshold (T): ~88% — lactate threshold, "comfortably hard" ~1hr
+  // - Interval (I):  ~98% — VO2max work, ~4-5min reps
+  // - Repetition (R): ~105% — neuromuscular, very short
+  return {
+    vVO2maxSecPerMi,
+    thresholdSecPerMi: vVO2maxSecPerMi / 0.88,
+    marathonSecPerMi:  vVO2maxSecPerMi / 0.83,
+    easySecPerMi:      vVO2maxSecPerMi / 0.74
+  };
+}
+
+// Karvonen HR zones from HRmax + HRrest. Zone boundaries are the % of HRR
+// (heart rate reserve = HRmax - HRrest) added to HRrest.
+function deriveHrZones(hrMax, hrRest) {
+  if (!hrMax || !hrRest) return null;
+  const hrr = hrMax - hrRest;
+  const z = (pct) => Math.round(hrRest + hrr * pct);
+  return {
+    z1: [z(0.50), z(0.60)],  // recovery
+    z2: [z(0.60), z(0.70)],  // aerobic base
+    z3: [z(0.70), z(0.80)],  // tempo
+    z4: [z(0.80), z(0.90)],  // threshold
+    z5: [z(0.90), z(1.00)]   // VO2max
+  };
+}
+
+// HRmax fallback estimate from age. Tanaka et al. 2001: 208 - 0.7×age
+// (more accurate than the classic 220-age formula across adult populations).
+function estimateHrMax(age) {
+  if (!age || age < 5 || age > 100) return null;
+  return Math.round(208 - 0.7 * age);
+}
+
+// Recommend a target pace for a given interval mode based on the user's
+// profile. Returns sec/mi. Falls back to the global default if uncalibrated.
+function recommendPaceFor(method, profile) {
+  if (!profile || !profile.thresholdSecPerMi) return 9 * 60; // global default
+  switch (method) {
+    case 'norwegian':
+      // Norwegian 4×4 work intervals = VO2max effort ≈ I-pace ≈ vVO2max ÷ 0.98
+      return Math.round(profile.vVO2maxSecPerMi / 0.98);
+    case 'pyramid':
+      // Pyramid mixes I and T effort; use threshold pace as a reasonable middle.
+      return Math.round(profile.thresholdSecPerMi);
+    case 'fartlek':
+      // Fartlek surges = I-pace, but loose. Use 5K race pace approx.
+      return Math.round(profile.thresholdSecPerMi * 0.97);
+    case 'galloway':
+      // Galloway is for easy/long runs at conversational pace.
+      return Math.round(profile.easySecPerMi);
+    case 'tactical':
+      // Tactical ruck shuffle: aerobic base + pack adjustment. Add 90s for pack.
+      return Math.round(profile.easySecPerMi + 90);
+    default:
+      return Math.round(profile.easySecPerMi || profile.thresholdSecPerMi || 9 * 60);
+  }
+}
+
+// Suggest a goal distance based on the user's recent workout history.
+// Avoids the 5K-by-default trap that doesn't fit beginners or experienced runners.
+function recommendGoalDistanceM(profile, workouts) {
+  if (workouts && workouts.length >= 3) {
+    // Use median recent distance
+    const recent = workouts.slice(0, 10).map(w => w.distanceM).sort((a, b) => a - b);
+    const median = recent[Math.floor(recent.length / 2)];
+    // Round to clean grid (0.5 mi increments)
+    const mi = median / 1609.344;
+    return Math.max(0.5, Math.round(mi * 2) / 2) * 1609.344;
+  }
+  // No history: scale by self-reported experience
+  if (profile && profile.runsPerWeek >= 4) return 5 * 1609.344;       // 5mi
+  if (profile && profile.runsPerWeek >= 1) return 3 * 1609.344;       // 3mi
+  return 1.5 * 1609.344;  // 1.5mi for true beginners
+}
+
+// Acute:Chronic Workload Ratio. Gabbett 2016; ratio of last-7-day load to
+// 28-day rolling avg. Values 0.8-1.3 are the "sweet spot"; >1.5 strongly
+// correlates with injury risk in the literature.
+function computeACWR(workouts, now = Date.now()) {
+  if (!workouts || workouts.length === 0) return null;
+  const day = 24 * 60 * 60 * 1000;
+  const ws = workouts.filter(w => w.endedAt && (now - w.endedAt) < 28 * day);
+  if (ws.length === 0) return null;
+  // Simple load proxy: duration in minutes × RPE (default 6 if missing).
+  // sRPE = session RPE × duration_min. (Foster's classic method.)
+  const load = (w) => (w.durationMs / 60000) * (w.rpe || 6);
+  const last7 = ws.filter(w => (now - w.endedAt) < 7 * day);
+  const acute = last7.reduce((s, w) => s + load(w), 0) / 7;
+  const chronic = ws.reduce((s, w) => s + load(w), 0) / 28;
+  if (chronic < 1) return null;
+  return acute / chronic;
+}
+
+// Recommend today's workout based on:
+// 1. ACWR (training-load) — if HIGH RISK, recommend rest/recovery
+// 2. Last session's intensity — alternate hard/easy days
+// 3. Days since last session — break = ease back in
+// 4. Whether user is calibrated — beginners get easier shapes
+//
+// Returns an object: { kind, label, sub, method, paceSecPerMi, goalDistM,
+// goalTimeMs, reason }
+// Or { kind: 'rest', label, sub, reason } for a recovery recommendation.
+//
+// Used by the home screen to populate the hero CTA with a specific plan
+// the user can tap to accept. Override is always one tap away (the existing
+// pre-workout flow).
+function recommendWorkout(profile, workouts, now = Date.now()) {
+  const day = 24 * 60 * 60 * 1000;
+  const acwr = computeACWR(workouts, now);
+  const recent = (workouts || []).filter(w => w.endedAt && now - w.endedAt < 14 * day);
+  const last = workouts && workouts.length > 0 ? workouts[0] : null;
+  const daysSinceLast = last ? (now - last.endedAt) / day : Infinity;
+
+  // 1. HIGH RISK → mandatory rest recommendation. Requires at least 4
+  // workouts in the chronic window so a single hard session can't trip it.
+  const chronicCount = (workouts || []).filter(w => w.endedAt && now - w.endedAt < 28 * day).length;
+  if (acwr != null && acwr > 1.5 && chronicCount >= 4) {
+    return {
+      kind: 'rest',
+      label: 'TAKE A REST DAY',
+      sub: 'Acute load is elevated — recovery now prevents injury later',
+      reason: `ACWR ${acwr.toFixed(2)} > 1.5 (Gabbett threshold)`
+    };
+  }
+
+  // 2. Elevated → recommend an easy session capped at zone 2.
+  // Require enough chronic-window data so a single workout doesn't trip it.
+  const isElevated = acwr != null && acwr > 1.3 && chronicCount >= 4;
+
+  // 3. No profile → first-workout shape, conservative.
+  if (!profile || !profile.thresholdSecPerMi) {
+    return {
+      kind: 'workout',
+      label: 'EASY 20 MIN',
+      sub: 'Comfortable pace, talk-test effort. Builds your aerobic base.',
+      method: 'off',
+      paceSecPerMi: 11 * 60,   // generic easy ~11:00/mi
+      goalTimeMs: 20 * 60 * 1000,
+      reason: 'No calibration yet — first session is steady aerobic'
+    };
+  }
+
+  // 4. Returning after >7 days → ease back in.
+  if (daysSinceLast > 7) {
+    return {
+      kind: 'workout',
+      label: 'EASY 30 MIN',
+      sub: `Easy effort at ${formatPaceLabel(profile.easySecPerMi)}/mi to rebuild rhythm`,
+      method: 'off',
+      paceSecPerMi: profile.easySecPerMi,
+      goalTimeMs: 30 * 60 * 1000,
+      reason: `${Math.floor(daysSinceLast)} days since last session — reintroduction`
+    };
+  }
+
+  // 5. Elevated → easy recovery
+  if (isElevated) {
+    return {
+      kind: 'workout',
+      label: 'EASY RECOVERY 30 MIN',
+      sub: `Aerobic only at ${formatPaceLabel(profile.easySecPerMi)}/mi — let the body absorb`,
+      method: 'off',
+      paceSecPerMi: profile.easySecPerMi,
+      goalTimeMs: 30 * 60 * 1000,
+      reason: `ACWR ${acwr.toFixed(2)} — elevated training load`
+    };
+  }
+
+  // 6. Alternate hard/easy. Look at last session's effort.
+  // Hard session = avg pace ≤ threshold pace, or duration > 60 min.
+  let lastWasHard = false;
+  if (last) {
+    const lastAvg = last.distanceM > 0 ? (last.durationMs / 1000) / (last.distanceM / 1609.344) : null;
+    if (lastAvg && profile.thresholdSecPerMi && lastAvg < profile.thresholdSecPerMi + 30) {
+      lastWasHard = true;
+    }
+    if (last.durationMs > 60 * 60 * 1000) lastWasHard = true;
+    if (last.pacingPlan && (last.pacingPlan.label || '').includes('NORWEGIAN')) lastWasHard = true;
+  }
+
+  // Count workouts in last 7 days to balance the week
+  const last7 = recent.filter(w => now - w.endedAt < 7 * day);
+  const hardThisWeek = last7.filter(w => w.rpe && w.rpe >= 7).length;
+
+  // 7. Already 2+ hard sessions this week → easy
+  if (hardThisWeek >= 2) {
+    return {
+      kind: 'workout',
+      label: 'EASY 40 MIN',
+      sub: `${hardThisWeek} hard sessions this week — base building today`,
+      method: 'off',
+      paceSecPerMi: profile.easySecPerMi,
+      goalTimeMs: 40 * 60 * 1000,
+      reason: 'Limit hard work to 2x/week (literature: ≥80/20 polarized)'
+    };
+  }
+
+  // 8. Last was hard → easy today
+  if (lastWasHard) {
+    return {
+      kind: 'workout',
+      label: 'EASY 35 MIN',
+      sub: `Recovery pace at ${formatPaceLabel(profile.easySecPerMi)}/mi`,
+      method: 'off',
+      paceSecPerMi: profile.easySecPerMi,
+      goalTimeMs: 35 * 60 * 1000,
+      reason: 'Yesterday was hard — alternate intensity'
+    };
+  }
+
+  // 9. Otherwise: time for a quality session.
+  // Pick one of: Norwegian 4×4 (week 1), Pyramid (week 2), tempo run (week 3),
+  // long run (week 4) — rotating by week-of-month for variety.
+  const week = Math.floor((now / day) / 7) % 4;
+  if (week === 0) {
+    return {
+      kind: 'workout',
+      label: 'NORWEGIAN 4×4',
+      sub: `4×(4min hard @ ${formatPaceLabel(profile.vVO2maxSecPerMi/0.98)}/mi, 3min easy) · 28 min`,
+      method: 'norwegian',
+      paceSecPerMi: Math.round(profile.vVO2maxSecPerMi / 0.98),
+      reason: 'Quality day — VO₂max work'
+    };
+  } else if (week === 1) {
+    return {
+      kind: 'workout',
+      label: 'PYRAMID 1-2-3-2-1',
+      sub: `Ladder intervals at threshold (${formatPaceLabel(profile.thresholdSecPerMi)}/mi) · 18 min`,
+      method: 'pyramid',
+      paceSecPerMi: Math.round(profile.thresholdSecPerMi),
+      reason: 'Quality day — lactate threshold'
+    };
+  } else if (week === 2) {
+    // Tempo: steady run at threshold pace for ~25-30 min
+    return {
+      kind: 'workout',
+      label: 'TEMPO 30 MIN',
+      sub: `Steady ${formatPaceLabel(profile.thresholdSecPerMi)}/mi — comfortably hard, all the way`,
+      method: 'off',
+      paceSecPerMi: profile.thresholdSecPerMi,
+      goalTimeMs: 30 * 60 * 1000,
+      reason: 'Quality day — tempo run'
+    };
+  } else {
+    // Long easy run: 60 min at marathon pace (or easy)
+    return {
+      kind: 'workout',
+      label: 'LONG RUN 60 MIN',
+      sub: `Steady ${formatPaceLabel(profile.easySecPerMi)}/mi — builds aerobic capacity`,
+      method: 'off',
+      paceSecPerMi: profile.easySecPerMi,
+      goalTimeMs: 60 * 60 * 1000,
+      reason: 'Quality day — long aerobic'
+    };
+  }
+}
+
+// Helper: format sec/mi as "M:SS" for label strings (no unit suffix).
+function formatPaceLabel(secPerMi) {
+  if (!secPerMi || !isFinite(secPerMi)) return '--:--';
+  const m = Math.floor(secPerMi / 60);
+  const s = Math.round(secPerMi % 60);
+  return m + ':' + s.toString().padStart(2, '0');
 }
 
 // -- Unit helpers -------------------------------------------------------
@@ -251,6 +742,27 @@ function showConfirm({ title = 'Confirm', message = '', confirmLabel = 'OK', can
   });
 }
 
+// -- Weather (heat/humidity adjustment) ---------------------------------
+// Open-Meteo provides a free, key-less weather API. We hit current weather
+// at the user's GPS coords once at workout start. Falls back to null on
+// any error — FuelCoach handles null tempC fine, just uses standard intervals.
+async function fetchWeather(lat, lon) {
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m&temperature_unit=celsius`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || !data.current) return null;
+    return {
+      tempC: data.current.temperature_2m,
+      humidityPct: data.current.relative_humidity_2m
+    };
+  } catch (e) {
+    console.warn('weather fetch failed', e);
+    return null;
+  }
+}
+
 // -- Permission state ---------------------------------------------------
 
 async function getLocationPermission() {
@@ -318,6 +830,23 @@ class LiveWorkout {
     this.lastFixWallTime = null; // for GPS dropout detection
     this.gpsLostSince = null;
     this.filterStats = { accepted: 0, rejAccuracy: 0, rejJump: 0, rejNoise: 0, rejDrift: 0, rejColdStart: 0 };
+    // 4-state Kalman filter for position smoothing + velocity estimation.
+    // Used for distance accumulation (better than EMA), pace estimation
+    // (uses filtered velocity directly), and dropout interpolation.
+    this.kalman = new KalmanGPS();
+    // Velocity buffer — most recent N filtered-speed samples for smoothed
+    // instant pace. Updated on every accepted fix.
+    this.speedBuffer = [];  // [{ t, speed }]
+    // Elevation tracking for grade-adjusted pace + total ascent/descent.
+    // Altitudes from the Geolocation API are unreliable on phone GPS, so
+    // we smooth aggressively and only compute grade once we've accumulated
+    // enough horizontal distance to render the slope meaningful.
+    this.elevationBuffer = [];   // [{ t, alt, dist }] smoothed series
+    this.totalAscentM = 0;
+    this.totalDescentM = 0;
+    this.lastAlt = null;
+    // HR tracking
+    this.hrSamples = [];
   }
 
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -362,7 +891,7 @@ class LiveWorkout {
   }
 
   onPosition(pos) {
-    const { latitude, longitude, accuracy } = pos.coords;
+    const { latitude, longitude, accuracy, altitude, altitudeAccuracy } = pos.coords;
     // Prefer the fix's own timestamp.
     const now = pos.timestamp || Date.now();
     const wallNow = Date.now();
@@ -388,7 +917,7 @@ class LiveWorkout {
       return;
     }
 
-    const rawFix = { lat: latitude, lon: longitude, t: now, acc: accuracy };
+    const rawFix = { lat: latitude, lon: longitude, t: now, acc: accuracy, alt: altitude, altAcc: altitudeAccuracy };
 
     // COLD START: GPS chips frequently emit one or two terrible first fixes
     // before settling. Skip the first 2 accepted fixes — use them to seed
@@ -405,11 +934,13 @@ class LiveWorkout {
       return;
     }
 
-    // First *recorded* fix (after cold-start): re-seed and start the route.
+    // First *recorded* fix (after cold-start): re-seed Kalman + start route.
     if (!this.lastPoint || this.points.length === 0) {
       this.lastFix = rawFix;
       this.lastPoint = { ...rawFix };
       this.points.push({ ...rawFix });
+      // Initialize Kalman filter with this first good fix.
+      this.kalman.update(latitude, longitude, accuracy, now);
       this.filterStats.accepted++;
       this.emit();
       return;
@@ -448,27 +979,26 @@ class LiveWorkout {
 
     // GATE 4: GPS dropout recovery — if last accepted fix was > 10s ago,
     // we can't trust the direct line between then and now (might've gone
-    // around a corner). Don't accumulate the gap distance; just re-seed.
+    // around a corner). Don't accumulate the gap distance; just re-seed
+    // the Kalman filter to the new fix.
     if (dt > 10) {
       this.lastFix = rawFix;
       this.lastPoint = { ...rawFix };
       this.points.push({ ...rawFix });
+      this.kalman.reset();
+      this.kalman.update(latitude, longitude, accuracy, now);
       this.filterStats.accepted++;
       this.emit();
       return;
     }
 
-    // Accuracy-weighted smoothing. The weighting reflects how much to trust
-    // the new fix vs the previous accepted point. With equal accuracies, alpha
-    // = 0.5 (50/50 blend). When the new fix is more accurate, alpha goes up
-    // (lean new). When less accurate, alpha drops (lean old). We deliberately
-    // do NOT track posterior accuracy — without process noise it shrinks
-    // unboundedly and over-smooths real motion.
-    const prevAcc = this.lastFix.acc;
-    const alpha = (prevAcc * prevAcc) / (prevAcc * prevAcc + accuracy * accuracy);
-    const smoothLat = this.lastPoint.lat * (1 - alpha) + latitude * alpha;
-    const smoothLon = this.lastPoint.lon * (1 - alpha) + longitude * alpha;
-    const smoothed = { lat: smoothLat, lon: smoothLon, t: now, acc: accuracy };
+    // Kalman filter update. Returns filtered position + velocity. The
+    // filter handles smoothing far better than the prior EMA approach:
+    // - Bad fixes (high accuracy) get downweighted naturally via R = acc²
+    // - Velocity is persistent — short dropouts don't lose progress
+    // - Covariance is bounded — no unbounded over-smoothing
+    const filtered = this.kalman.update(latitude, longitude, accuracy, now);
+    const smoothed = { lat: filtered.lat, lon: filtered.lon, t: now, acc: accuracy, speed: filtered.speed };
 
     const d = haversine(this.lastPoint, smoothed);
     this.distanceM += d;
@@ -477,6 +1007,35 @@ class LiveWorkout {
     this.points.push(smoothed);
     this.lastMoveAt = now;
     this.filterStats.accepted++;
+
+    // Elevation tracking. Mobile GPS altitude is noisy (often ±10m even on
+    // good fixes), so we smooth aggressively and only count ascent/descent
+    // changes larger than a 3m threshold. This matches the convention
+    // Strava and Garmin use for "total ascent" computation.
+    if (rawFix.alt != null && (rawFix.altAcc == null || rawFix.altAcc < 30)) {
+      smoothed.alt = rawFix.alt;
+      this.elevationBuffer.push({ t: now, alt: rawFix.alt, dist: this.distanceM });
+      // Keep last 20 elevation samples for grade computation
+      while (this.elevationBuffer.length > 20) this.elevationBuffer.shift();
+      // Smoothed altitude = avg of last 5 samples
+      const recent = this.elevationBuffer.slice(-5);
+      const smoothAlt = recent.reduce((s, x) => s + x.alt, 0) / recent.length;
+      if (this.lastAlt != null) {
+        const delta = smoothAlt - this.lastAlt;
+        if (Math.abs(delta) > 3) {
+          if (delta > 0) this.totalAscentM += delta;
+          else           this.totalDescentM += -delta;
+          this.lastAlt = smoothAlt;
+        }
+      } else {
+        this.lastAlt = smoothAlt;
+      }
+    }
+
+    // Speed buffer for filtered-velocity-based pace (instant + responsive,
+    // way smoother than position-delta-based pace).
+    this.speedBuffer.push({ t: now, speed: filtered.speed });
+    while (this.speedBuffer.length > 10) this.speedBuffer.shift();
 
     // Rolling pace buffer (cross-phase, 30s window).
     this.rollingBuffer.push({ t: now, dist: this.distanceM });
@@ -534,6 +1093,73 @@ class LiveWorkout {
     return units === 'metric' ? 1000 / speed : 1609.344 / speed;
   }
 
+  // Instant pace from the Kalman filter's velocity estimate. Far smoother
+  // than position-delta-based pace because velocity is a tracked state
+  // variable that's already filtered. Use this for responsive UI display;
+  // use rolling pace for "current effort" calculations that need stability.
+  getInstantPaceSecPerUnit(units) {
+    if (this.speedBuffer.length < 3) return null;
+    // Average the last few filtered speeds (smooths over noise even more)
+    const recent = this.speedBuffer.slice(-5);
+    const avgSpeed = recent.reduce((s, x) => s + x.speed, 0) / recent.length;
+    if (avgSpeed < 0.3) return null; // below ~0.7mph, treat as stationary
+    return units === 'metric' ? 1000 / avgSpeed : 1609.344 / avgSpeed;
+  }
+
+  // GPS quality indicator from Kalman position stdev. Returns a 0-100 score.
+  getGpsQuality() {
+    const stdev = this.kalman.positionStdev();
+    if (!isFinite(stdev)) return 0;
+    // Map stdev to score: 5m = 100, 50m = 0, linear interp.
+    if (stdev <= 5) return 100;
+    if (stdev >= 50) return 0;
+    return Math.round(100 * (50 - stdev) / 45);
+  }
+
+  // Current grade (slope) as a fraction (0.05 = 5% uphill, -0.05 = 5% down).
+  // Computed from the recent elevation buffer with a horizontal distance
+  // floor — slopes are noisy at short distances on phone GPS.
+  getCurrentGrade() {
+    if (this.elevationBuffer.length < 4) return 0;
+    // Use last ~50m of horizontal distance
+    const last = this.elevationBuffer[this.elevationBuffer.length - 1];
+    let start = last;
+    for (let i = this.elevationBuffer.length - 2; i >= 0; i--) {
+      const s = this.elevationBuffer[i];
+      if (last.dist - s.dist >= 30) { start = s; break; }
+      start = s;
+    }
+    const horizM = last.dist - start.dist;
+    if (horizM < 20) return 0;  // need enough horizontal to compute grade
+    const dh = last.alt - start.alt;
+    const grade = dh / horizM;
+    // Clamp to ±25% — anything past that is GPS noise on phone hardware
+    return Math.max(-0.25, Math.min(0.25, grade));
+  }
+
+  // Grade-adjusted pace using Minetti et al. 2002 (J Appl Physiol) energy
+  // cost curve. The polynomial below models metabolic cost of locomotion
+  // per unit distance as a function of slope. We use it to convert actual
+  // pace on a slope to the "equivalent flat-ground pace" of the same effort.
+  //
+  // Minetti's cost function C(i) where i = slope fraction:
+  //   C(i) = 155.4·i⁵ − 30.4·i⁴ − 43.3·i³ + 46.3·i² + 19.5·i + 3.6
+  // (Returns kJ/(kg·km). Flat ground = 3.6.)
+  //
+  // GAP = actual_pace × (C_flat / C_grade). If you're running 9:00/mi uphill
+  // and the slope costs 2x the energy, GAP is 4:30/mi equivalent flat effort.
+  getGradeAdjustedPaceSecPerUnit(units) {
+    const actualSecPerUnit = this.getInstantPaceSecPerUnit(units);
+    if (actualSecPerUnit == null) return null;
+    const grade = this.getCurrentGrade();
+    if (Math.abs(grade) < 0.015) return actualSecPerUnit; // <1.5% = effectively flat
+    const i = grade;
+    const C_flat = 3.6;
+    const C_grade = 155.4*i*i*i*i*i - 30.4*i*i*i*i - 43.3*i*i*i + 46.3*i*i + 19.5*i + 3.6;
+    if (C_grade <= 0) return actualSecPerUnit;
+    return actualSecPerUnit * (C_flat / C_grade);
+  }
+
   onError(err) {
     if (err.code === 1) {
       this.gpsSignal = 'searching';
@@ -556,7 +1182,50 @@ class LiveWorkout {
         const result = this.pacingPlan.tick(this.elapsedMs, this.distanceM);
         const sc = window.__soundCoach;
         if (result && result.phase !== this.currentPhase) {
-          // Real transition: fire phase-change cue.
+          // Real transition. BEFORE switching phase, measure the just-ended
+          // phase's actual pace for adaptive recalibration.
+          const prevPhase = this.currentPhase;
+          if (prevPhase === 'walk' && this.phaseBuffer.length >= 2) {
+            // We just finished a walk segment. Compute observed walk pace
+            // and feed it back into the pacing plan so the NEXT walk's
+            // assumed pace is accurate. This fixes the static 18:00/mi
+            // assumption — heavy ruckers walk slower, fit runners walk faster.
+            const first = this.phaseBuffer[0];
+            const last = this.phaseBuffer[this.phaseBuffer.length - 1];
+            const dt = (last.t - first.t) / 1000;
+            const dd = last.dist - first.dist;
+            if (dt > 10 && dd > 5) {
+              const observedSpeed = dd / dt;
+              const observedSecPerMi = 1609.344 / observedSpeed;
+              if (observedSecPerMi > 8*60 && observedSecPerMi < 30*60) {
+                // Smooth: weight new observation 50/50 with prior estimate
+                if (this.observedWalkSecPerMi) {
+                  this.observedWalkSecPerMi =
+                    (this.observedWalkSecPerMi + observedSecPerMi) / 2;
+                } else {
+                  this.observedWalkSecPerMi = observedSecPerMi;
+                  // First measurement — surface to user once
+                  if (typeof toast === 'function') {
+                    const m = Math.floor(observedSecPerMi / 60);
+                    const s = Math.round(observedSecPerMi % 60).toString().padStart(2, '0');
+                    toast(`Walk pace measured: ${m}:${s}/mi — pacing recalibrated`, 'info');
+                  }
+                }
+                // Also persist into profile (slower-changing avg)
+                try {
+                  const p = loadProfile();
+                  if (!p.observedWalkPaceSecPerMi) {
+                    p.observedWalkPaceSecPerMi = observedSecPerMi;
+                  } else {
+                    // Slow exponential moving avg across sessions
+                    p.observedWalkPaceSecPerMi =
+                      p.observedWalkPaceSecPerMi * 0.85 + observedSecPerMi * 0.15;
+                  }
+                  saveProfile(p);
+                } catch {}
+              }
+            }
+          }
           this.currentPhase = result.phase;
           this.phaseBuffer = []; // reset per-phase pace
           if (sc) sc.onPhaseChange(result.phase, result.label);
@@ -606,6 +1275,8 @@ class LiveWorkout {
         } else if (sc._gpsLostFired) {
           sc.onGpsRecovered();
         }
+        // Periodic form/posture cue
+        sc.onFormCue(this.elapsedMs);
       }
     }
     this.lastTickAt = now;
@@ -782,7 +1453,7 @@ class LiveWorkout {
       distanceM: this.distanceM,
       packWeightKg: this.packWeightKg,
       avgPaceSecPerKm,
-      points: this.points.map(p => ({ lat: p.lat, lon: p.lon, t: p.t })),
+      points: this.points.map(p => ({ lat: p.lat, lon: p.lon, t: p.t, alt: p.alt })),
       notes: '',
       // Provenance: useful for post-workout review and for future device-
       // comparison studies. All optional, all stable schema additions.
@@ -790,11 +1461,16 @@ class LiveWorkout {
       compensatedPauseMs: this.compensatedPauseMs || 0,
       filterStats: { ...this.filterStats },
       pacingPlan: this.pacingPlan
-        ? { runSecs: this.pacingPlan.runSecs, walkSecs: this.pacingPlan.walkSecs }
+        ? { runSecs: this.pacingPlan.runSecs, walkSecs: this.pacingPlan.walkSecs, label: this.pacingPlan.label }
         : null,
       goalDistM: this.goalDistM,
       goalTimeMs: this.goalTimeMs,
-      schemaVersion: 2
+      // New schema v3 fields — all optional, default to null/0 in old reads
+      totalAscentM: this.totalAscentM || 0,
+      totalDescentM: this.totalDescentM || 0,
+      hrSamples: this.hrSamples || [],
+      observedWalkSecPerMi: this.observedWalkSecPerMi || null,
+      schemaVersion: 3
     };
   }
 }
@@ -1061,22 +1737,42 @@ function buildFartlekPlan({ workPaceSecPerMi, recoveryPaceSecPerMi, seed }) {
 // - Pre-empt the 2% bodyweight loss threshold where performance degrades
 
 class FuelCoach {
-  constructor({ packKg, mode, goalDistM, goalTimeMs, expectedDurationMs }) {
+  constructor({ packKg, mode, goalDistM, goalTimeMs, expectedDurationMs, tempC = null, humidityPct = null }) {
     this.packKg = packKg || 0;
     this.mode = mode;
     this.goalDistM = goalDistM;
     this.goalTimeMs = goalTimeMs;
     this.expectedDurationMs = expectedDurationMs;
+    this.tempC = tempC;          // ambient temp in Celsius if known
+    this.humidityPct = humidityPct;
     this.lastAckHydrateMs = 0;
     this.lastAckFuelMs = 0;
     this.pendingAlert = null;
     this.history = [];
   }
 
+  // Heat-stress multiplier on hydration. Above 21°C (70°F), each additional
+  // 5°C cuts the safe interval. Humidity >70% adds another 10% urgency. This
+  // tracks the ACSM hydration position stand and military hot-weather guidance.
+  _heatMultiplier() {
+    if (this.tempC == null) return 1.0;
+    let mult = 1.0;
+    if (this.tempC > 21) {
+      const heatExcess = this.tempC - 21;
+      mult = 1.0 - Math.min(0.5, heatExcess * 0.04); // up to 50% shorter
+    }
+    if (this.humidityPct != null && this.humidityPct > 70) {
+      mult *= 0.9;
+    }
+    return Math.max(0.4, mult);
+  }
+
   hydrateIntervalMs() {
-    if (this.packKg >= 18) return 12 * 60 * 1000;
-    if (this.packKg >= 9)  return 14 * 60 * 1000;
-    return 15 * 60 * 1000;
+    let base;
+    if (this.packKg >= 18) base = 12 * 60 * 1000;
+    else if (this.packKg >= 9) base = 14 * 60 * 1000;
+    else base = 15 * 60 * 1000;
+    return Math.round(base * this._heatMultiplier());
   }
 
   fuelIntervalMs() {
@@ -1160,6 +1856,113 @@ function fuelPlanEstimate({ durationMs, packKg }) {
     carbsG,
     notes: null
   };
+}
+
+// -- HR monitor via Web Bluetooth --------------------------------------
+// Pairs with any Bluetooth LE Heart Rate Monitor (Polar H10, Wahoo TICKR,
+// Garmin HRM-Dual, Apple Watch via the right app, etc). The Heart Rate
+// Service UUID is the BLE-standard 0x180D, and the Measurement char is
+// 0x2A37. Web Bluetooth is supported on Chrome (Android, ChromeOS, desktop),
+// Edge, and Samsung Internet. NOT iOS Safari — there we fall back to
+// post-workout RPE entry.
+//
+// Pairing requires HTTPS + a user gesture (the PAIR button click), so we
+// call requestDevice() inside the button handler. Subsequent connects
+// are automatic via the stored device ID, but the user has to grant
+// reconnect on most browsers.
+
+const HR_SERVICE_UUID = 0x180D;
+const HR_CHAR_UUID    = 0x2A37;
+
+class HRMonitor {
+  constructor() {
+    this.device = null;
+    this.server = null;
+    this.characteristic = null;
+    this.connected = false;
+    this.lastBpm = null;
+    this.lastBpmAt = null;
+    this.listeners = new Set();
+  }
+
+  static isSupported() {
+    return typeof navigator !== 'undefined'
+      && 'bluetooth' in navigator
+      && typeof navigator.bluetooth.requestDevice === 'function';
+  }
+
+  on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  emit() { for (const fn of this.listeners) fn(this); }
+
+  // Initiates pairing UI. MUST be called inside a user-gesture handler.
+  async pair() {
+    if (!HRMonitor.isSupported()) {
+      throw new Error('Web Bluetooth not supported on this browser');
+    }
+    this.device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [HR_SERVICE_UUID] }],
+      optionalServices: ['battery_service']
+    });
+    if (!this.device) throw new Error('No device selected');
+    this.device.addEventListener('gattserverdisconnected', () => {
+      this.connected = false;
+      this.emit();
+    });
+    await this._connect();
+    return this.device.name || 'HR strap';
+  }
+
+  async _connect() {
+    if (!this.device || !this.device.gatt) throw new Error('No device');
+    this.server = await this.device.gatt.connect();
+    const service = await this.server.getPrimaryService(HR_SERVICE_UUID);
+    this.characteristic = await service.getCharacteristic(HR_CHAR_UUID);
+    this.characteristic.addEventListener('characteristicvaluechanged', (e) => {
+      const bpm = this._parse(e.target.value);
+      if (bpm != null && bpm > 0 && bpm < 250) {
+        this.lastBpm = bpm;
+        this.lastBpmAt = Date.now();
+        this.emit();
+      }
+    });
+    await this.characteristic.startNotifications();
+    this.connected = true;
+    this.emit();
+  }
+
+  // Parse the BLE HRM measurement characteristic. First byte is flags;
+  // if bit 0 = 0, BPM is uint8; if bit 0 = 1, BPM is uint16.
+  _parse(dataView) {
+    const flags = dataView.getUint8(0);
+    if (flags & 0x01) {
+      return dataView.getUint16(1, /*littleEndian=*/ true);
+    }
+    return dataView.getUint8(1);
+  }
+
+  disconnect() {
+    try {
+      if (this.device && this.device.gatt && this.device.gatt.connected) {
+        this.device.gatt.disconnect();
+      }
+    } catch {}
+    this.connected = false;
+    this.lastBpm = null;
+    this.emit();
+  }
+
+  // Get the user's HR zone given their HRmax + HRrest. Returns 1-5 or null.
+  getZone(profile) {
+    if (!this.lastBpm || !profile || !profile.hrMax || !profile.hrRest) return null;
+    const hrr = profile.hrMax - profile.hrRest;
+    const pct = (this.lastBpm - profile.hrRest) / hrr;
+    if (pct < 0.5) return 1;
+    if (pct < 0.6) return 1;
+    if (pct < 0.7) return 2;
+    if (pct < 0.8) return 3;
+    if (pct < 0.9) return 4;
+    return 5;
+  }
 }
 
 // -- SoundCoach: speech + audio cues -----------------------------------
@@ -1374,6 +2177,27 @@ class SoundCoach {
     this.say(phrase);
   }
 
+  // Form cue — periodic posture / cadence reminder every ~10 minutes.
+  // Quiet by default (only fires on FULL or VERBOSE verbosity). Rotates
+  // through cues to avoid repetition fatigue.
+  onFormCue(elapsedMs) {
+    if (this.verbosity === SOUND_OFF || this.verbosity === SOUND_MINIMAL) return;
+    if (!this._lastFormCueMs) this._lastFormCueMs = 0;
+    if (elapsedMs - this._lastFormCueMs < 10 * 60 * 1000) return;  // every 10 min
+    if (elapsedMs < 5 * 60 * 1000) return;  // not in first 5 min
+    this._lastFormCueMs = elapsedMs;
+    const cues = [
+      'Stand tall. Eyes up the road.',
+      'Relax your shoulders. Quick light steps.',
+      'Breathe deep into your belly.',
+      'Quick cadence. Light on your feet.',
+      'Tall posture. Strong core.',
+      'Smooth and easy. You\'re doing well.'
+    ];
+    this._formCueIdx = ((this._formCueIdx || 0) + 1) % cues.length;
+    this.say(cues[this._formCueIdx]);
+  }
+
   // Verbose periodic update — pace + status every 2 min, only in verbose mode.
   onVerboseTick(elapsedMs, currentPaceSecPerMi, status) {
     if (this.verbosity !== SOUND_VERBOSE) return;
@@ -1466,15 +2290,16 @@ const Workouts = {
 // -- Router -------------------------------------------------------------
 
 const routes = {
-  '#/welcome':   renderWelcome,
-  '#/onboard':   renderOnboarding,
-  '#/home':      renderHome,
-  '#/pre':       renderPre,
-  '#/live':      renderLive,
-  '#/summary':   renderSummary,
-  '#/history':   renderHistory,
-  '#/detail':    renderDetail,
-  '#/profile':   renderProfile
+  '#/welcome':     renderWelcome,
+  '#/onboard':     renderOnboarding,
+  '#/home':        renderHome,
+  '#/pre':         renderPre,
+  '#/live':        renderLive,
+  '#/summary':     renderSummary,
+  '#/history':     renderHistory,
+  '#/detail':      renderDetail,
+  '#/profile':     renderProfile,
+  '#/calibration': renderCalibration
 };
 
 function navigate(hash) {
@@ -1615,6 +2440,7 @@ function renderOnboarding(root) {
 function renderHome(root) {
   const node = mountTemplate(root, 'tpl-home');
   const settings = loadSettings();
+  const profile = loadProfile();
   applyUnits(node, settings.units);
 
   // Date
@@ -1635,30 +2461,116 @@ function renderHome(root) {
     }
   })();
 
-  // Month stats
-  const m = Workouts.monthStats();
-  node.querySelector('[data-month="distance"]').textContent =
-    Units.formatDistance(m.distanceM, settings.units) + ' ' + Units.distanceLabel(settings.units);
-  node.querySelector('[data-month="time"]').textContent =
-    Units.formatDurationShort(m.durationMs) || '0m';
-  // weight moved: shown in user's units
-  const movedDisplay = settings.units === 'metric'
-    ? `${Math.round(m.weightMovedKgKm)} kg·km`
-    : `${Math.round(m.weightMovedKgKm * 0.621371 * 2.20462)} lb·mi`;
-  node.querySelector('[data-month="moved"]').textContent = movedDisplay;
-
-  // Recent
-  const recents = Workouts.list().slice(0, 3);
-  const list = node.querySelector('#recent-list');
-  if (recents.length === 0) {
-    list.innerHTML = '<li class="muted small" style="text-align:center;padding:12px;">No workouts yet — hit START.</li>';
-  } else {
-    recents.forEach(w => list.appendChild(workoutRow(w, settings)));
+  // Calibration prompt: show if profile is not calibrated AND user hasn't
+  // explicitly dismissed it. The dismissal lives in settings so the prompt
+  // stops nagging.
+  const calCard = node.querySelector('#calibration-card');
+  const showCal = !profile.miTrialPaceSecPerMi && !settings.calDismissedAt;
+  if (showCal) {
+    calCard.classList.remove('hidden');
+    node.querySelector('#cal-start').addEventListener('click', () => navigate('#/calibration'));
+    node.querySelector('#cal-skip').addEventListener('click', () => {
+      saveSettings({ ...settings, calDismissedAt: Date.now() });
+      calCard.classList.add('hidden');
+      toast('Calibration skipped. You can run it anytime from Profile.', 'info');
+    });
   }
 
-  node.querySelector('#start-workout').addEventListener('click', () => {
+  // Readiness — ACWR-based
+  const allWorkouts = Workouts.list();
+  const acwr = computeACWR(allWorkouts);
+  const readinessVal = node.querySelector('#readiness-value');
+  const readinessDetail = node.querySelector('#readiness-detail');
+  if (allWorkouts.length < 3) {
+    readinessVal.textContent = '—';
+    readinessVal.className = 'readiness-value';
+    readinessDetail.textContent = `${3 - allWorkouts.length} more session(s) needed for readiness tracking.`;
+  } else if (acwr == null) {
+    readinessVal.textContent = 'BUILD';
+    readinessVal.className = 'readiness-value';
+    readinessDetail.textContent = 'Not enough recent training to assess load. Train consistently for accurate readiness.';
+  } else if (acwr < 0.8) {
+    readinessVal.textContent = 'FRESH';
+    readinessVal.className = 'readiness-value';
+    readinessDetail.textContent = `Acute:chronic load ${acwr.toFixed(2)}. Light load lately — green light for harder work today.`;
+  } else if (acwr <= 1.3) {
+    readinessVal.textContent = 'OPTIMAL';
+    readinessVal.className = 'readiness-value';
+    readinessDetail.textContent = `Acute:chronic load ${acwr.toFixed(2)}. You're in the training sweet spot.`;
+  } else if (acwr <= 1.5) {
+    readinessVal.textContent = 'ELEVATED';
+    readinessVal.className = 'readiness-value warn';
+    readinessDetail.textContent = `Acute:chronic load ${acwr.toFixed(2)}. Recent volume up. Consider an easier session today.`;
+  } else {
+    readinessVal.textContent = 'HIGH RISK';
+    readinessVal.className = 'readiness-value danger';
+    readinessDetail.textContent = `Acute:chronic load ${acwr.toFixed(2)}. Strongly consider rest or active recovery today.`;
+  }
+
+  // Week stats — last 7 days
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+  const weekStart = Date.now() - weekMs;
+  const week = allWorkouts.filter(w => w.endedAt && w.endedAt >= weekStart);
+  const weekDist = week.reduce((s, w) => s + (w.distanceM || 0), 0);
+  const weekDur = week.reduce((s, w) => s + (w.durationMs || 0), 0);
+  node.querySelector('[data-week="distance"]').textContent =
+    Units.formatDistance(weekDist, settings.units) + ' ' + Units.distanceLabel(settings.units);
+  node.querySelector('[data-week="time"]').textContent =
+    Units.formatDurationShort(weekDur) || '0m';
+  node.querySelector('[data-week="count"]').textContent = String(week.length);
+
+  // Workout-of-the-day: compute recommended workout and populate the WOD card.
+  // The user can tap it to accept (passes the recommendation into pre-workout
+  // via session storage) or tap "freestyle" to go to the default pre-workout.
+  const wod = recommendWorkout(profile, allWorkouts);
+  const wodCard = node.querySelector('#start-workout');
+  const wodTag = node.querySelector('#wod-tag');
+  const wodLabel = node.querySelector('#wod-label');
+  const wodSub = node.querySelector('#wod-sub');
+  const wodAction = node.querySelector('#wod-action');
+  wodLabel.textContent = wod.label;
+  wodSub.textContent = wod.sub;
+  if (wod.kind === 'rest') {
+    wodCard.classList.add('rest');
+    wodTag.textContent = 'TODAY';
+    wodAction.textContent = 'SEE WHY →';
+  } else {
+    wodCard.classList.remove('rest');
+    wodTag.textContent = 'TODAY';
+    wodAction.textContent = 'START →';
+  }
+
+  // Tap → either show "why rest" sheet (rest day) or pre-populate the
+  // pre-workout screen with this recommendation.
+  wodCard.addEventListener('click', () => {
+    if (wod.kind === 'rest') {
+      // Show a brief "why rest" confirm; let user override into freestyle.
+      showConfirm({
+        title: 'Rest day recommended',
+        message: wod.sub + '\n\n' + wod.reason + '\n\nRest is the most underused tool in training. But if you really want to train, tap "Train anyway".',
+        confirmLabel: 'TRAIN ANYWAY',
+        cancelLabel: 'OK, REST'
+      }).then(ok => {
+        if (ok) navigate('#/pre');
+      });
+      return;
+    }
+    // Stash the WOD so pre-workout can pick it up.
+    sessionStorage.setItem('ruckops.wod', JSON.stringify(wod));
     navigate('#/pre');
   });
+
+  // Freestyle link → go to pre-workout fresh (no WOD applied)
+  const freestyleBtn = node.querySelector('#freestyle-link');
+  if (freestyleBtn) {
+    freestyleBtn.addEventListener('click', () => {
+      sessionStorage.removeItem('ruckops.wod');
+      navigate('#/pre');
+    });
+  }
+
+  const linkHistory = node.querySelector('#link-history');
+  if (linkHistory) linkHistory.addEventListener('click', () => navigate('#/history'));
 }
 
 function workoutRow(w, settings) {
@@ -1734,14 +2646,36 @@ function renderPre(root) {
   // Pacing & goal configurator.
   // State: method, target pace (sec/unit), run/walk durations (custom),
   // goal type (none/distance/time), goal value.
-  let method = 'off';
-  let paceSecPerUnit = 9 * 60;  // 9:00/mi default
+  // Defaults pulled from the calibrated profile when available; otherwise
+  // fall back to 9:00/mi (a reasonable middle for first-time users).
+  const profile = loadProfile();
+
+  // Pick up the WOD from sessionStorage if the user came from the home
+  // recommendation. Applied AS DEFAULTS — the user can still override every
+  // tile before starting. If absent, use the standard profile-aware defaults.
+  let wod = null;
+  try {
+    const stash = sessionStorage.getItem('ruckops.wod');
+    if (stash) wod = JSON.parse(stash);
+    sessionStorage.removeItem('ruckops.wod');  // consume once
+  } catch {}
+
+  let method = wod && wod.method ? wod.method : 'off';
+  let paceSecPerUnit = (() => {
+    const defaultSecPerMi = (wod && wod.paceSecPerMi)
+      || profile.easySecPerMi || 9 * 60;
+    return settings.units === 'metric'
+      ? defaultSecPerMi / 1.609344
+      : defaultSecPerMi;
+  })();
+  // Snap to stepper grid (15s)
+  paceSecPerUnit = Math.round(paceSecPerUnit / 15) * 15;
   let customRunSecs = 240;
   let customWalkSecs = 60;
-  let goalType = 'none';
-  // Default goal: 3 mi (4828m) — clean grid value for the stepper.
-  let goalDistM = 3 * 1609.344;
-  let goalTimeSec = 30 * 60;     // 30 min default
+  // WOD goal: time-based by default (most prescribed workouts are time-based).
+  let goalType = wod ? (wod.goalTimeMs ? 'time' : (wod.goalDistM ? 'distance' : 'none')) : 'none';
+  let goalDistM = (wod && wod.goalDistM) || recommendGoalDistanceM(profile, Workouts.list());
+  let goalTimeSec = (wod && wod.goalTimeMs) ? Math.round(wod.goalTimeMs / 1000) : 30 * 60;
 
   const paceConfig = node.querySelector('#pace-config');
   const customConfig = node.querySelector('#custom-config');
@@ -2092,13 +3026,24 @@ function renderPre(root) {
     return null;
   }
 
-  // Pacing method selection
+  // Pacing method selection — when method changes, also push a smart pace
+  // default from the calibrated profile. The user can still override via
+  // the stepper.
   node.querySelectorAll('.pacing-opt').forEach(b => {
     b.addEventListener('click', () => {
       node.querySelectorAll('.pacing-opt').forEach(x => x.classList.remove('selected'));
       b.classList.add('selected');
       method = b.dataset.pacing;
       if (navigator.vibrate) navigator.vibrate(6);
+      // Push a profile-aware default. If user hasn't calibrated, fall back to 9:00/mi.
+      if (method !== 'off') {
+        const recSecPerMi = recommendPaceFor(method, profile);
+        paceSecPerUnit = settings.units === 'metric'
+          ? recSecPerMi / 1.609344
+          : recSecPerMi;
+        // Snap to the stepper's grid (15-second increments)
+        paceSecPerUnit = Math.round(paceSecPerUnit / 15) * 15;
+      }
       renderConfigurator();
     });
   });
@@ -2173,6 +3118,19 @@ function renderPre(root) {
     renderGoal();
   });
 
+  // Apply WOD-derived UI selections BEFORE the first render.
+  if (wod) {
+    node.querySelectorAll('.pacing-opt').forEach(x => x.classList.remove('selected'));
+    const methodBtn = node.querySelector(`.pacing-opt[data-pacing="${method}"]`);
+    if (methodBtn) methodBtn.classList.add('selected');
+    if (goalType !== 'none') {
+      node.querySelectorAll('.goal-opt').forEach(x => x.classList.remove('selected'));
+      const goalBtn = node.querySelector(`.goal-opt[data-goal="${goalType}"]`);
+      if (goalBtn) goalBtn.classList.add('selected');
+    }
+    setTimeout(() => toast('Today\'s workout loaded — tap any tile to override', 'info'), 200);
+  }
+
   renderConfigurator();
 
   // Wire coaching sheet — live-saves to settings so the pre-flight summary
@@ -2219,6 +3177,106 @@ function renderPre(root) {
       toast('Playing test sound', 'info');
     });
   }
+
+  // -- HR pairing wiring --------------------------------------------------
+  // Use a shared HRMonitor across this renderPre and the live workout. We
+  // stash it on window so the live screen can pick it up.
+  if (!window.__hrMonitor) window.__hrMonitor = new HRMonitor();
+  const hr = window.__hrMonitor;
+  const hrTile = node.querySelector('#tile-hr-btn');
+  const hrTileVal = node.querySelector('#tile-hr-val');
+  const hrTileDetail = node.querySelector('#tile-hr-detail');
+  const hrPairBtn = node.querySelector('#hr-pair-btn');
+  const hrDisconnectBtn = node.querySelector('#hr-disconnect-btn');
+  const hrStatusEl = node.querySelector('#hr-status');
+  const hrCurrentEl = node.querySelector('#hr-current');
+  const hrZoneEl = node.querySelector('#hr-zone');
+  const hrSupportedMsg = node.querySelector('#hr-supported-msg');
+  const hrMaxInput = node.querySelector('#hr-max-input');
+  const hrRestInput = node.querySelector('#hr-rest-input');
+
+  // Hide HR tile entirely on browsers that don't support Web Bluetooth
+  // (most notably iOS Safari). The post-workout RPE prompt fills the gap.
+  if (!HRMonitor.isSupported()) {
+    hrTile.style.display = 'none';
+    if (hrSupportedMsg) {
+      hrSupportedMsg.textContent = 'Web Bluetooth isn\'t supported on this browser. Post-workout RPE entry still tracks load. (Try Chrome on Android for HR support.)';
+    }
+    if (hrPairBtn) hrPairBtn.disabled = true;
+  }
+
+  // Pre-populate HRmax/HRrest from profile
+  if (hrMaxInput && profile.hrMax) hrMaxInput.value = profile.hrMax;
+  if (hrRestInput && profile.hrRest) hrRestInput.value = profile.hrRest;
+
+  function renderHrUi() {
+    const bpm = hr.lastBpm;
+    const cur = loadProfile();
+    if (hr.connected) {
+      hrTileVal.textContent = bpm ? bpm + ' BPM' : 'Connected';
+      const zone = hr.getZone(cur);
+      hrTileDetail.textContent = zone ? 'Zone ' + zone + ' · live coaching active' : 'Set HRmax/HRrest for zones';
+      hrTile.classList.add('warn');
+      hrStatusEl.textContent = hr.device && hr.device.name || 'Connected';
+      hrCurrentEl.textContent = bpm ? bpm + ' BPM' : '—';
+      hrZoneEl.textContent = zone ? 'Z' + zone : '—';
+      hrPairBtn.classList.add('hidden');
+      hrDisconnectBtn.classList.remove('hidden');
+    } else {
+      hrTileVal.textContent = 'Not paired';
+      hrTileDetail.textContent = HRMonitor.isSupported()
+        ? 'Tap to pair a Bluetooth strap'
+        : 'Web Bluetooth unsupported on this browser';
+      hrTile.classList.remove('warn');
+      hrStatusEl.textContent = 'Not paired';
+      hrCurrentEl.textContent = '—';
+      hrZoneEl.textContent = '—';
+      hrPairBtn.classList.remove('hidden');
+      hrDisconnectBtn.classList.add('hidden');
+    }
+  }
+
+  hr.on(renderHrUi);
+  renderHrUi();
+
+  if (hrPairBtn) {
+    hrPairBtn.addEventListener('click', async () => {
+      try {
+        hrPairBtn.disabled = true;
+        const name = await hr.pair();
+        toast('Paired: ' + name, 'success');
+      } catch (e) {
+        console.warn('HR pair failed', e);
+        if (e.name === 'NotFoundError' || /user.*cancel/i.test(e.message)) {
+          // User cancelled the picker — no toast needed.
+        } else {
+          toast('HR pairing failed: ' + (e.message || 'unknown'), 'danger');
+        }
+      } finally {
+        hrPairBtn.disabled = false;
+      }
+    });
+  }
+  if (hrDisconnectBtn) {
+    hrDisconnectBtn.addEventListener('click', () => {
+      hr.disconnect();
+      toast('HR strap disconnected', 'info');
+    });
+  }
+
+  // Save HRmax/HRrest to profile when user edits
+  function saveHrProfile() {
+    const p = loadProfile();
+    const hm = parseInt(hrMaxInput.value, 10);
+    const hr_ = parseInt(hrRestInput.value, 10);
+    if (hm && hm >= 120 && hm <= 220) p.hrMax = hm;
+    if (hr_ && hr_ >= 30 && hr_ <= 100) p.hrRest = hr_;
+    p.zones = deriveHrZones(p.hrMax, p.hrRest);
+    saveProfile(p);
+    renderHrUi();
+  }
+  if (hrMaxInput) hrMaxInput.addEventListener('change', saveHrProfile);
+  if (hrRestInput) hrRestInput.addEventListener('change', saveHrProfile);
 
   // GPS probe loop. simple watch.
   const gpsStatus = node.querySelector('#gps-status');
@@ -2352,6 +3410,24 @@ function renderPre(root) {
         goalTimeMs: lw.goalTimeMs,
         expectedDurationMs
       });
+      // Async: fetch weather and update the fuel coach. Non-blocking;
+      // standard intervals are used until the response arrives. We use
+      // the user's last known GPS coords if available, otherwise skip.
+      if (lw.lastFix && lw.lastFix.lat) {
+        fetchWeather(lw.lastFix.lat, lw.lastFix.lon).then(w => {
+          if (w && lw.fuelCoach) {
+            lw.fuelCoach.tempC = w.tempC;
+            lw.fuelCoach.humidityPct = w.humidityPct;
+            if (w.tempC > 27 || w.tempC < 5) {
+              // Surface heat/cold awareness
+              const advice = w.tempC > 27
+                ? `Hot: ${Math.round(w.tempC)}°C — hydration intervals shortened`
+                : `Cold: ${Math.round(w.tempC)}°C — dress warm, layers`;
+              toast(advice, 'info');
+            }
+          }
+        });
+      }
     }
 
     // Instantiate SoundCoach for this workout. Reads voice/sound prefs
@@ -2475,6 +3551,38 @@ function renderLive(root) {
       avgPaceEl.textContent = '--:--';
     }
 
+    // GAP (grade-adjusted pace) — only show when grade is meaningful (>1.5%).
+    // On flats this is identical to instant pace and just clutters the screen.
+    const gapStat = node.querySelector('#live-gap-stat');
+    const gapEl = node.querySelector('#live-gap');
+    const grade = live.getCurrentGrade();
+    if (gapStat && gapEl && Math.abs(grade) > 0.015 && currentSecPerUnit != null) {
+      const gap = live.getGradeAdjustedPaceSecPerUnit(settings.units);
+      if (gap != null) {
+        gapStat.classList.remove('hidden');
+        gapEl.textContent = Units.formatPace(gap);
+        // Label shows grade so user knows why GAP differs from PACE
+        const lbl = gapStat.querySelector('.label');
+        if (lbl) lbl.textContent = 'GAP ' + (grade > 0 ? '+' : '') + Math.round(grade * 100) + '%';
+      }
+    } else if (gapStat) {
+      gapStat.classList.add('hidden');
+    }
+
+    // Elevation gain — show once we've climbed at least 10m
+    const elevStat = node.querySelector('#live-elev-stat');
+    const elevEl = node.querySelector('#live-elev');
+    if (elevStat && elevEl && live.totalAscentM >= 10) {
+      elevStat.classList.remove('hidden');
+      if (settings.units === 'metric') {
+        elevEl.textContent = Math.round(live.totalAscentM) + ' m';
+      } else {
+        elevEl.textContent = Math.round(live.totalAscentM * 3.28084) + ' ft';
+      }
+    } else if (elevStat) {
+      elevStat.classList.add('hidden');
+    }
+
     // Pace color cue on the ROLLING pace (current effort vs target).
     paceEl.classList.remove('on-target', 'slow', 'too-slow', 'too-fast');
     if (currentSecPerUnit != null && live.targetPaceSecPerMi != null) {
@@ -2498,6 +3606,25 @@ function renderLive(root) {
         gpsChip.className = 'gps-chip ' + sig;
         gpsChip.textContent = '📡 ' + sig.toUpperCase();
       }
+    }
+
+    // HR chip — live BPM + zone color. Hidden if no HR is connected.
+    const hrChip = node.querySelector('#live-hr-chip');
+    const hrMon = window.__hrMonitor;
+    if (hrChip && hrMon && hrMon.connected && hrMon.lastBpm) {
+      hrChip.classList.remove('hidden');
+      const profile = loadProfile();
+      const zone = hrMon.getZone(profile);
+      hrChip.className = 'hr-chip live' + (zone ? ' zone-' + zone : '');
+      hrChip.textContent = hrMon.lastBpm + ' BPM' + (zone ? ' · Z' + zone : '');
+      // Sample HR into the live workout for the saved record
+      if (!live.hrSamples) live.hrSamples = [];
+      if (!live._lastHrSample || Date.now() - live._lastHrSample > 1000) {
+        live.hrSamples.push({ t: live.elapsedMs, bpm: hrMon.lastBpm });
+        live._lastHrSample = Date.now();
+      }
+    } else if (hrChip) {
+      hrChip.classList.add('hidden');
     }
 
     // Pacing banner — visible only if a plan is attached.
@@ -2673,6 +3800,21 @@ function renderSummary(root) {
   if (record.mode === 'ruck') {
     stats.push({ label: 'PACK WEIGHT', val: `${Units.formatWeight(record.packWeightKg, settings.units)} ${Units.weightLabel(settings.units)}` });
   }
+  // Elevation gain
+  if (record.totalAscentM && record.totalAscentM >= 10) {
+    const ascentDisplay = settings.units === 'metric'
+      ? `${Math.round(record.totalAscentM)} m`
+      : `${Math.round(record.totalAscentM * 3.28084)} ft`;
+    stats.push({ label: 'ASCENT', val: ascentDisplay });
+  }
+  // HR averages from samples
+  if (record.hrSamples && record.hrSamples.length > 0) {
+    const bpms = record.hrSamples.map(s => s.bpm);
+    const avgHr = Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length);
+    const maxHr = Math.max(...bpms);
+    stats.push({ label: 'AVG HR', val: avgHr + ' BPM' });
+    stats.push({ label: 'MAX HR', val: maxHr + ' BPM' });
+  }
   // Calorie estimate: very rough — METs * weight(kg) * hours.
   // Walk ~3.5 METs, ruck w/ pack ~6 METs, run ~9 METs.
   const bw = settings.bodyWeight;
@@ -2690,6 +3832,39 @@ function renderSummary(root) {
     statsEl.appendChild(el);
   }
 
+  // RPE picker — one-tap selection.
+  let selectedRpe = null;
+  const rpeBtns = node.querySelectorAll('.rpe-btn');
+  rpeBtns.forEach(b => {
+    b.addEventListener('click', () => {
+      rpeBtns.forEach(x => x.classList.remove('selected'));
+      b.classList.add('selected');
+      selectedRpe = parseInt(b.dataset.rpe, 10);
+      if (navigator.vibrate) navigator.vibrate(8);
+    });
+  });
+  // If the workout had HR data, pre-suggest an RPE based on time in zones.
+  if (record.hrSamples && record.hrSamples.length > 0) {
+    const profile = loadProfile();
+    if (profile.hrMax && profile.hrRest) {
+      const hrr = profile.hrMax - profile.hrRest;
+      const avgPct = record.hrSamples
+        .map(s => (s.bpm - profile.hrRest) / hrr)
+        .reduce((a, b) => a + b, 0) / record.hrSamples.length;
+      let suggested;
+      if (avgPct < 0.6) suggested = 2;
+      else if (avgPct < 0.7) suggested = 4;
+      else if (avgPct < 0.8) suggested = 6;
+      else if (avgPct < 0.9) suggested = 8;
+      else suggested = 10;
+      const btn = node.querySelector(`.rpe-btn[data-rpe="${suggested}"]`);
+      if (btn) {
+        btn.classList.add('selected');
+        selectedRpe = suggested;
+      }
+    }
+  }
+
   // Map
   const mapWrap = node.querySelector('#summary-map');
   if (record.points.length >= 2) {
@@ -2701,6 +3876,7 @@ function renderSummary(root) {
   // Save / discard
   node.querySelector('#summary-save').addEventListener('click', () => {
     record.notes = node.querySelector('#summary-notes').value || '';
+    if (selectedRpe != null) record.rpe = selectedRpe;
     Workouts.save(record);
     Storage.remove(DRAFT_KEY);
     window.__liveWorkout = null;
@@ -2901,8 +4077,37 @@ function renderProfile(root) {
       const count = Workouts.list().length;
       storT.textContent = count + ' workout' + (count === 1 ? '' : 's') + ' · local only';
     }
+
+    // Calibration tile
+    const calT = node.querySelector('#tile-cal-val');
+    const calD = node.querySelector('#tile-cal-detail');
+    const profile = loadProfile();
+    if (calT) {
+      if (profile.miTrialPaceSecPerMi) {
+        const secPerMi = profile.miTrialPaceSecPerMi;
+        const secPerUnit = cur.units === 'metric' ? secPerMi / 1.609344 : secPerMi;
+        const m = Math.floor(secPerUnit / 60);
+        const s = Math.round(secPerUnit % 60).toString().padStart(2, '0');
+        const unit = cur.units === 'metric' ? '/km' : '/mi';
+        calT.textContent = '1mi time: ' + m + ':' + s + unit;
+        if (calD && profile.miTrialAt) {
+          const date = new Date(profile.miTrialAt);
+          const days = Math.floor((Date.now() - date.getTime()) / (24 * 60 * 60 * 1000));
+          calD.textContent = days === 0 ? 'today' : days + ' day' + (days === 1 ? '' : 's') + ' ago · tap to recalibrate';
+        }
+      } else {
+        calT.textContent = 'Not calibrated · tap to run';
+        if (calD) calD.textContent = '12 min · unlocks personalized pacing';
+      }
+    }
   }
   renderProfileTiles();
+
+  // Wire calibration tile click
+  const calTile = node.querySelector('#tile-cal');
+  if (calTile) {
+    calTile.addEventListener('click', () => navigate('#/calibration'));
+  }
 
   function persist() {
     const u = unitsSel.value;
@@ -3146,6 +4351,301 @@ function renderProfile(root) {
     e.preventDefault();
     alert('RuckOps web MVP v0.1\n\nForeground GPS tracking. Local-only data. No account, no cloud.\n\nSee README on GitHub for the full project plan and v2 roadmap.');
   });
+}
+
+// -- Calibration session ------------------------------------------------
+// A guided 3-phase fitness test: warmup → 1mi time trial → cooldown.
+// On completion, derives vVO2max / threshold / easy / marathon paces using
+// Daniels' Running Formula percentages, saves them into the profile, and
+// every interval mode in the app uses them as defaults from then on.
+//
+// The session uses GPS tracking like a real workout but does NOT persist
+// to the workouts list — only the derived paces go into the profile.
+// User can SKIP PHASE (advance immediately) or ABORT (discard).
+
+const CAL_WARMUP_MS    = 5 * 60 * 1000;   // 5 min easy
+const CAL_TRIAL_DIST_M = 1609.344;        // 1 mile
+const CAL_COOLDOWN_MS  = 5 * 60 * 1000;   // 5 min easy
+
+function renderCalibration(root) {
+  const node = mountTemplate(root, 'tpl-calibration');
+  const settings = loadSettings();
+  applyUnits(node, settings.units);
+
+  // State machine: 'intro' | 'warmup' | 'trial' | 'cooldown' | 'results'
+  let phase = 'intro';
+  let phaseStartedAt = null;   // ms timestamp when current phase began
+  let trialStartDistM = null;  // distance reading at trial-start
+  let trialEndedAt = null;
+  let trialPaceSecPerMi = null;
+  let lw = null;                // shared LiveWorkout for GPS tracking
+  let updateInterval = null;
+  let sc = null;                // SoundCoach
+
+  // Elements
+  const phaseLabel = node.querySelector('#cal-phase-label');
+  const phaseStep = node.querySelector('#cal-phase-step');
+  const hero = node.querySelector('#cal-hero');
+  const heroLabel = node.querySelector('#cal-hero-label');
+  const distEl = node.querySelector('#cal-distance');
+  const durEl = node.querySelector('#cal-duration');
+  const paceEl = node.querySelector('#cal-pace');
+  const instructionEl = node.querySelector('#cal-instruction');
+  const skipBtn = node.querySelector('#cal-skip-phase');
+  const abortBtn = node.querySelector('#cal-abort');
+  const introSheet = node.querySelector('#sheet-cal-intro');
+  const resultsSheet = node.querySelector('#sheet-cal-results');
+
+  // -- Phase transitions --
+  function setPhase(newPhase) {
+    phase = newPhase;
+    phaseStartedAt = Date.now();
+    if (newPhase === 'warmup') {
+      phaseLabel.textContent = 'WARMUP';
+      phaseStep.textContent = 'Step 1 of 3';
+      heroLabel.textContent = 'LEFT';
+      instructionEl.textContent = 'Warm up at a comfortable easy pace. Get your legs moving and your breathing steady.';
+      if (sc) sc.say('Warmup. Five minutes easy.', { urgent: true });
+    } else if (newPhase === 'trial') {
+      phaseLabel.textContent = 'TIME TRIAL';
+      phaseStep.textContent = 'Step 2 of 3 · 1 MILE';
+      heroLabel.textContent = 'TO GO';
+      instructionEl.textContent = 'Now push as hard as you can sustain for one mile. This sets every pace in the app.';
+      trialStartDistM = lw ? lw.distanceM : 0;
+      if (sc) {
+        sc.say('Warmup complete. Time trial starts now. Push hard for one mile.', { urgent: true });
+        sc.beep(880, 200);
+        setTimeout(() => sc.beep(1100, 300), 220);
+      }
+    } else if (newPhase === 'cooldown') {
+      phaseLabel.textContent = 'COOL DOWN';
+      phaseStep.textContent = 'Step 3 of 3';
+      heroLabel.textContent = 'LEFT';
+      instructionEl.textContent = 'Easy jog or walk for five minutes. Your numbers are saved — finishing well sets you up for tomorrow.';
+      // Compute trial pace
+      if (lw && trialStartDistM != null) {
+        const trialDistM = lw.distanceM - trialStartDistM;
+        const trialDurMs = Date.now() - phaseStartedAt;
+        // We just transitioned, so phaseStartedAt is "now". Use the
+        // trial's actual duration (from end-of-warmup to now).
+        // Re-read by computing from elapsedMs progression — simpler:
+        // track trialEndedAt separately.
+        trialEndedAt = Date.now();
+        // Pace = duration / distance_in_miles
+        const trialMi = trialDistM / 1609.344;
+        if (trialMi > 0) {
+          // We need the trial duration BEFORE phaseStartedAt was reset.
+          // Compute from before-this-call:
+          // Hmm — phaseStartedAt was reset at top of setPhase. We need a
+          // separate variable for trial duration.
+        }
+      }
+      if (sc) {
+        sc.say('One mile complete. Easy cool down for five minutes.', { urgent: true });
+        sc.beep(660, 150);
+      }
+    } else if (newPhase === 'results') {
+      // Stop GPS tracking
+      if (lw && lw.status === 'running') {
+        lw.stop();
+      }
+      if (updateInterval) { clearInterval(updateInterval); updateInterval = null; }
+      // Compute trial pace from stored values
+      computeAndShowResults();
+    }
+  }
+
+  // We need to track the trial duration accurately. Let me restructure:
+  // record trial start/end times separately from phaseStartedAt.
+  let trialStartedAt = null;
+
+  // Override setPhase logic by hooking it post-call
+  const _setPhase = setPhase;
+  setPhase = function(newPhase) {
+    if (newPhase === 'trial') {
+      trialStartedAt = Date.now();
+    } else if (newPhase === 'cooldown' && trialStartedAt != null) {
+      trialEndedAt = Date.now();
+      if (lw && trialStartDistM != null) {
+        const trialDistM = lw.distanceM - trialStartDistM;
+        const trialDurMs = trialEndedAt - trialStartedAt;
+        const trialMi = trialDistM / 1609.344;
+        if (trialMi >= 0.85) {  // sanity floor — accept slight short measurements
+          // Scale to a per-mile pace
+          trialPaceSecPerMi = (trialDurMs / 1000) / trialMi;
+        }
+      }
+    }
+    _setPhase(newPhase);
+  };
+
+  function computeAndShowResults() {
+    if (!trialPaceSecPerMi || trialPaceSecPerMi < 4 * 60 || trialPaceSecPerMi > 20 * 60) {
+      // No valid trial pace (too short distance, GPS bad, etc.)
+      toast('Trial result invalid — try calibration again on a clearer route', 'danger');
+      navigate('#/home');
+      return;
+    }
+    const profile = loadProfile();
+    const runsPerWeek = profile.runsPerWeek || 3;
+    const derived = derivePacesFromMileTrial(trialPaceSecPerMi, runsPerWeek);
+    // Populate the results sheet
+    const fmt = (secPerMi) => {
+      if (!secPerMi || !isFinite(secPerMi)) return '—';
+      const secPerUnit = settings.units === 'metric' ? secPerMi / 1.609344 : secPerMi;
+      const m = Math.floor(secPerUnit / 60);
+      const s = Math.round(secPerUnit % 60);
+      return m + ':' + s.toString().padStart(2, '0') + ' /' + (settings.units === 'metric' ? 'km' : 'mi');
+    };
+    node.querySelector('#cal-result-headline').textContent =
+      'Your 1-mile pace: ' + fmt(trialPaceSecPerMi);
+    node.querySelector('#cal-vvo2').textContent = fmt(derived.vVO2maxSecPerMi);
+    node.querySelector('#cal-threshold').textContent = fmt(derived.thresholdSecPerMi);
+    node.querySelector('#cal-easy').textContent = fmt(derived.easySecPerMi);
+    node.querySelector('#cal-marathon').textContent = fmt(derived.marathonSecPerMi);
+    // Stash for SAVE handler
+    node.querySelector('#cal-save').onclick = () => {
+      const updated = {
+        ...profile,
+        miTrialPaceSecPerMi: trialPaceSecPerMi,
+        miTrialAt: new Date().toISOString(),
+        ...derived
+      };
+      saveProfile(updated);
+      toast('Calibration saved — paces personalized', 'success');
+      navigate('#/home');
+    };
+    node.querySelector('#cal-redo').onclick = () => {
+      // Restart from intro
+      trialPaceSecPerMi = null;
+      trialStartedAt = null;
+      trialEndedAt = null;
+      trialStartDistM = null;
+      resultsSheet.classList.add('hidden');
+      introSheet.classList.remove('hidden');
+      phaseLabel.textContent = 'WARMUP';
+      phaseStep.textContent = 'Step 1 of 3';
+    };
+    resultsSheet.classList.remove('hidden');
+  }
+
+  function tickUpdate() {
+    if (!lw || phase === 'intro' || phase === 'results') return;
+    distEl.textContent = Units.formatDistance(lw.distanceM, settings.units);
+    durEl.textContent = Units.formatDuration(lw.elapsedMs);
+    const rolling = lw.getRollingPaceSecPerUnit(settings.units);
+    paceEl.textContent = rolling ? Units.formatPace(rolling) : '--:--';
+
+    // Phase-specific hero metric + auto-advance
+    if (phase === 'warmup') {
+      const remaining = Math.max(0, CAL_WARMUP_MS - (Date.now() - phaseStartedAt));
+      const s = Math.ceil(remaining / 1000);
+      const mm = Math.floor(s / 60).toString().padStart(2, '0');
+      const ss = (s % 60).toString().padStart(2, '0');
+      hero.textContent = mm + ':' + ss;
+      // Anticipation cue at 10s remaining
+      if (remaining <= 10000 && remaining > 8500 && sc && !node._warmupAnt) {
+        node._warmupAnt = true;
+        sc.beep(880, 80);
+        sc.say('Ten seconds to time trial');
+      }
+      if (remaining === 0) {
+        setPhase('trial');
+      }
+    } else if (phase === 'trial') {
+      const covered = lw.distanceM - (trialStartDistM || 0);
+      const remaining = Math.max(0, CAL_TRIAL_DIST_M - covered);
+      const inUnit = settings.units === 'metric'
+        ? remaining / 1000
+        : remaining / 1609.344;
+      hero.textContent = inUnit < 0.01 ? '0.00' : inUnit.toFixed(2);
+      heroLabel.textContent = (settings.units === 'metric' ? 'KM' : 'MI') + ' TO GO';
+      if (remaining <= 0) {
+        setPhase('cooldown');
+      }
+    } else if (phase === 'cooldown') {
+      const remaining = Math.max(0, CAL_COOLDOWN_MS - (Date.now() - phaseStartedAt));
+      const s = Math.ceil(remaining / 1000);
+      const mm = Math.floor(s / 60).toString().padStart(2, '0');
+      const ss = (s % 60).toString().padStart(2, '0');
+      hero.textContent = mm + ':' + ss;
+      if (remaining === 0) {
+        setPhase('results');
+      }
+    }
+  }
+
+  // -- Button handlers --
+  node.querySelector('.back').addEventListener('click', () => {
+    if (phase !== 'intro' && phase !== 'results') {
+      showConfirm({
+        title: 'Abort calibration?',
+        message: 'Your time trial result will not be saved.',
+        confirmLabel: 'ABORT',
+        cancelLabel: 'KEEP GOING',
+        danger: true
+      }).then(ok => {
+        if (ok) cleanup() && navigate('#/home');
+      });
+    } else {
+      cleanup();
+      navigate('#/home');
+    }
+  });
+
+  abortBtn.addEventListener('click', () => {
+    showConfirm({
+      title: 'Abort calibration?',
+      message: 'Your time trial result will not be saved.',
+      confirmLabel: 'ABORT',
+      cancelLabel: 'KEEP GOING',
+      danger: true
+    }).then(ok => {
+      if (ok) {
+        cleanup();
+        navigate('#/home');
+      }
+    });
+  });
+
+  skipBtn.addEventListener('click', () => {
+    if (phase === 'warmup') setPhase('trial');
+    else if (phase === 'trial') setPhase('cooldown');
+    else if (phase === 'cooldown') setPhase('results');
+  });
+
+  // Intro sheet: BEGIN starts the warmup
+  node.querySelector('#cal-begin').addEventListener('click', () => {
+    introSheet.classList.add('hidden');
+    // Build a LiveWorkout for GPS tracking — but mark it as calibration so
+    // it doesn't save to the workouts list.
+    lw = new LiveWorkout({ mode: 'run', packWeightKg: 0, autoPause: false });
+    lw._calibration = true;
+    // Spin up a SoundCoach using current settings
+    sc = new SoundCoach({
+      verbosity: settings.voiceCues || 'full',
+      anticipationSec: settings.anticipationSec || 10,
+      useBeeps: settings.soundEffects !== false,
+      units: settings.units
+    });
+    sc.unlock();
+    window.__soundCoach = sc;
+    lw.start();
+    setPhase('warmup');
+    updateInterval = setInterval(tickUpdate, 200);
+  });
+  node.querySelector('#cal-cancel').addEventListener('click', () => {
+    cleanup();
+    navigate('#/home');
+  });
+
+  function cleanup() {
+    if (updateInterval) { clearInterval(updateInterval); updateInterval = null; }
+    if (lw && lw.status === 'running') lw.stop();
+    lw = null;
+    sc = null;
+    return true;
+  }
 }
 
 // -- Service worker registration ---------------------------------------

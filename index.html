@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css?v=20260511d" />
+  <link rel="stylesheet" href="styles.css?v=20260511f" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet" />
 </head>
@@ -116,27 +116,141 @@
       <div class="perm-banner hidden" id="perm-banner">
         Location permission needed — tap to fix.
       </div>
-      <button class="hero-cta" id="start-workout">
-        <span class="cta-label">START WORKOUT</span>
-        <span class="cta-sub">Tap to begin a ruck or run</span>
+
+      <!-- Calibration prompt — only visible when profile uncalibrated -->
+      <div class="calibration-card hidden" id="calibration-card">
+        <div class="calibration-content">
+          <span class="cal-title">UNLOCK PERSONALIZED COACHING</span>
+          <span class="cal-sub">A guided 12-minute calibration tunes every interval mode to your real fitness. Skip-able anytime.</span>
+        </div>
+        <div class="calibration-actions">
+          <button class="btn btn-text" id="cal-skip">SKIP</button>
+          <button class="btn btn-primary" id="cal-start">START</button>
+        </div>
+      </div>
+
+      <!-- Readiness + workout-of-the-day -->
+      <section class="readiness-card" id="readiness-card">
+        <div class="readiness-row">
+          <span class="readiness-label">READINESS</span>
+          <span class="readiness-value" id="readiness-value">—</span>
+        </div>
+        <p class="readiness-detail muted small" id="readiness-detail">Complete a few workouts to see your training load.</p>
+      </section>
+
+      <!-- Recommended workout — the WOD. Renders as a hero card with a
+           ONE-TAP ACCEPT button, plus a small "freestyle" link for full
+           custom flow. Updated by renderHome based on profile + history. -->
+      <button class="wod-card" id="start-workout">
+        <span class="wod-tag" id="wod-tag">TODAY</span>
+        <span class="wod-label" id="wod-label">START WORKOUT</span>
+        <span class="wod-sub" id="wod-sub">Tap to begin</span>
+        <span class="wod-action" id="wod-action">START →</span>
       </button>
-      <section class="panel">
-        <h3 class="panel-title">THIS MONTH</h3>
-        <div class="stat-row" id="month-stats">
-          <div class="stat"><span class="stat-label">DISTANCE</span><span class="stat-val" data-month="distance">0</span></div>
-          <div class="stat"><span class="stat-label">TIME</span><span class="stat-val" data-month="time">0:00</span></div>
-          <div class="stat"><span class="stat-label">WEIGHT MOVED</span><span class="stat-val" data-month="moved">0</span></div>
+      <button class="link-btn freestyle-btn" id="freestyle-link">or freestyle (custom workout) →</button>
+
+      <section class="panel compact-panel">
+        <div class="panel-row">
+          <h3 class="panel-title">THIS WEEK</h3>
+          <button class="link-btn" id="link-history">History →</button>
+        </div>
+        <div class="stat-row" id="week-stats">
+          <div class="stat"><span class="stat-label">DISTANCE</span><span class="stat-val" data-week="distance">0</span></div>
+          <div class="stat"><span class="stat-label">TIME</span><span class="stat-val" data-week="time">0:00</span></div>
+          <div class="stat"><span class="stat-label">SESSIONS</span><span class="stat-val" data-week="count">0</span></div>
         </div>
       </section>
-      <section class="panel">
-        <h3 class="panel-title">RECENT</h3>
-        <ol class="workout-list" id="recent-list"></ol>
-      </section>
+
       <nav class="tabbar">
         <a href="#/home" class="tab active">HOME</a>
         <a href="#/history" class="tab">HISTORY</a>
         <a href="#/profile" class="tab">PROFILE</a>
       </nav>
+    </main>
+  </template>
+
+  <!-- Calibration session screen -->
+  <template id="tpl-calibration">
+    <main class="screen calibration">
+      <header class="screen-header">
+        <button class="back" data-route="#/home" aria-label="Back">←</button>
+        <h2>CALIBRATION</h2>
+      </header>
+
+      <!-- Phase indicator at top — visible always -->
+      <div class="cal-phase-card">
+        <span class="cal-phase-label" id="cal-phase-label">WARMUP</span>
+        <span class="cal-phase-step" id="cal-phase-step">Step 1 of 3</span>
+      </div>
+
+      <!-- Hero metric: phase-specific (time or distance) -->
+      <div class="hero-metric">
+        <span class="hero-num" id="cal-hero">5:00</span>
+        <span class="hero-label" id="cal-hero-label">LEFT</span>
+      </div>
+
+      <div class="sub-metrics">
+        <div class="sub-stat"><span class="label">DISTANCE</span><span class="val" id="cal-distance">0.00</span></div>
+        <div class="sub-stat"><span class="label">DURATION</span><span class="val" id="cal-duration">0:00</span></div>
+        <div class="sub-stat"><span class="label">PACE</span><span class="val" id="cal-pace">--:--</span></div>
+      </div>
+
+      <p class="cal-instruction" id="cal-instruction">
+        Warm up at a comfortable easy pace. Don't push — this is just to get your legs moving.
+      </p>
+
+      <div class="live-controls">
+        <button class="btn btn-outline btn-large" id="cal-skip-phase">SKIP PHASE</button>
+        <button class="btn btn-danger btn-large" id="cal-abort">ABORT</button>
+      </div>
+
+      <!-- Pre-start sheet: shown before warmup begins -->
+      <div class="sheet" id="sheet-cal-intro" aria-hidden="false">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>BEFORE YOU START</h3></header>
+          <div class="sheet-body">
+            <p>This 12-minute calibration session gives the app what it needs to personalize every workout to your real fitness.</p>
+            <p><strong>What you'll do:</strong></p>
+            <ul class="cal-steps">
+              <li><strong>5 min warmup</strong> — easy jog, get loose</li>
+              <li><strong>1 mile time trial</strong> — push as hard as you can sustain for one mile</li>
+              <li><strong>5 min cooldown</strong> — easy jog</li>
+            </ul>
+            <p><strong>What you need:</strong></p>
+            <ul class="cal-steps">
+              <li>A flat, open route with clear GPS sky</li>
+              <li>About 15 minutes</li>
+              <li>Hydration nearby</li>
+            </ul>
+            <p class="muted small">After this, every interval mode (Norwegian 4×4, Galloway, etc.) will automatically suggest paces tuned to you.</p>
+            <button class="btn btn-primary btn-large" id="cal-begin">I'M READY · START WARMUP</button>
+            <button class="btn btn-text" id="cal-cancel">NOT NOW</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Post-trial results sheet -->
+      <div class="sheet hidden" id="sheet-cal-results" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>CALIBRATION COMPLETE</h3></header>
+          <div class="sheet-body">
+            <p class="cal-result-headline" id="cal-result-headline">Your 1-mile pace: --:--</p>
+            <div class="storage-stats" id="cal-derived">
+              <div class="row"><span class="label">vVO₂max pace</span><span class="val" id="cal-vvo2"></span></div>
+              <div class="row"><span class="label">Threshold pace</span><span class="val" id="cal-threshold"></span></div>
+              <div class="row"><span class="label">Easy pace</span><span class="val" id="cal-easy"></span></div>
+              <div class="row"><span class="label">Marathon pace</span><span class="val" id="cal-marathon"></span></div>
+            </div>
+            <p class="muted small">These paces are now used as defaults across every interval mode. You can override them per workout. We'll keep refining as you log more sessions.</p>
+            <button class="btn btn-primary btn-large" id="cal-save">SAVE & RETURN</button>
+            <button class="btn btn-text danger" id="cal-redo">REDO CALIBRATION</button>
+          </div>
+        </div>
+      </div>
     </main>
   </template>
 
@@ -173,6 +287,12 @@
       <button class="tile tile-wide" data-sheet="coaching">
         <span class="tile-label">COACHING</span>
         <span class="tile-value" id="tile-coaching-val">Full voice · 10s anticip</span>
+      </button>
+
+      <button class="tile tile-wide" data-sheet="hr" id="tile-hr-btn">
+        <span class="tile-label">HEART RATE</span>
+        <span class="tile-value" id="tile-hr-val">Not paired</span>
+        <span class="tile-detail" id="tile-hr-detail">Pair a Bluetooth strap for zone-based coaching</span>
       </button>
 
       <div class="gps-line">
@@ -361,6 +481,42 @@
           </div>
         </div>
       </div>
+
+      <!-- HR sheet — pair Bluetooth strap, optionally set HRmax/HRrest -->
+      <div class="sheet hidden" id="sheet-hr" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>HEART RATE</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div id="hr-status-area">
+              <p class="muted small" id="hr-supported-msg">Pair a Bluetooth heart-rate strap (Polar H10, Wahoo TICKR, Garmin HRM-Dual, etc.) to unlock zone-based coaching for every interval mode.</p>
+              <button class="btn btn-primary btn-large" id="hr-pair-btn">PAIR HR STRAP</button>
+              <button class="btn btn-outline hidden" id="hr-disconnect-btn">DISCONNECT</button>
+            </div>
+            <div class="storage-stats">
+              <div class="row"><span class="label">Status</span><span class="val" id="hr-status">Not paired</span></div>
+              <div class="row"><span class="label">Current</span><span class="val" id="hr-current">—</span></div>
+              <div class="row"><span class="label">Zone</span><span class="val" id="hr-zone">—</span></div>
+            </div>
+            <div class="setting-row">
+              <span class="muted">HRMAX (BPM)</span>
+              <div class="num-input small">
+                <input type="number" min="120" max="220" id="hr-max-input" inputmode="numeric" />
+                <span class="suffix">BPM</span>
+              </div>
+            </div>
+            <div class="setting-row">
+              <span class="muted">HRREST (BPM)</span>
+              <div class="num-input small">
+                <input type="number" min="30" max="100" id="hr-rest-input" inputmode="numeric" />
+                <span class="suffix">BPM</span>
+              </div>
+            </div>
+            <p class="muted small">HRmax: highest BPM seen in a hard effort. Defaults to 208 − 0.7·age if your age is set. HRrest: morning BPM before getting out of bed. These define your training zones.</p>
+          </div>
+        </div>
+      </div>
     </main>
   </template>
 
@@ -368,6 +524,7 @@
     <main class="screen live">
       <header class="live-header">
         <span class="gps-chip" id="live-gps-chip">📡 SEARCHING</span>
+        <span class="hr-chip hidden" id="live-hr-chip"></span>
         <button class="icon-btn" id="live-lock" title="Lock screen" aria-label="Lock screen">🔒</button>
       </header>
       <div class="fuel-alert hidden" id="fuel-alert">
@@ -409,6 +566,8 @@
         <div class="sub-stat"><span class="label">PACE</span><span class="val" id="live-pace">--:--</span></div>
         <div class="sub-stat"><span class="label">AVG</span><span class="val" id="live-avg-pace">--:--</span></div>
         <div class="sub-stat" id="live-pack-stat"><span class="label">PACK</span><span class="val" id="live-pack">--</span></div>
+        <div class="sub-stat hidden" id="live-gap-stat" title="Grade-adjusted pace (Minetti)"><span class="label">GAP</span><span class="val" id="live-gap">--:--</span></div>
+        <div class="sub-stat hidden" id="live-elev-stat"><span class="label">ASCENT</span><span class="val" id="live-elev">0</span></div>
       </div>
       <div class="live-controls">
         <button class="btn btn-outline btn-large" id="live-pause">PAUSE</button>
@@ -431,6 +590,21 @@
         <h2>WORKOUT COMPLETE</h2>
       </header>
       <div class="summary-stats" id="summary-stats"></div>
+
+      <!-- RPE: subjective effort rating. Required for training load tracking
+           on phones without HR. Mapped to the Borg CR-10 scale. Tap once. -->
+      <section class="panel compact-panel">
+        <h3 class="panel-title">HOW HARD?</h3>
+        <p class="muted small" id="rpe-help">Rate the effort. This sharpens the load tracking on your home screen.</p>
+        <div class="rpe-picker" id="rpe-picker">
+          <button class="rpe-btn" data-rpe="2"><span>2</span><span class="rpe-sub">EASY</span></button>
+          <button class="rpe-btn" data-rpe="4"><span>4</span><span class="rpe-sub">LIGHT</span></button>
+          <button class="rpe-btn" data-rpe="6"><span>6</span><span class="rpe-sub">MOD</span></button>
+          <button class="rpe-btn" data-rpe="8"><span>8</span><span class="rpe-sub">HARD</span></button>
+          <button class="rpe-btn" data-rpe="10"><span>10</span><span class="rpe-sub">MAX</span></button>
+        </div>
+      </section>
+
       <div class="map-wrap" id="summary-map"></div>
       <label class="muted small">NOTES</label>
       <textarea id="summary-notes" rows="3" placeholder="optional"></textarea>
@@ -503,12 +677,18 @@
         <span class="tile-value" id="tile-coaching2-val">Full voice · 10s anticip</span>
       </button>
 
+      <button class="tile tile-wide" id="tile-cal" data-route="#/calibration">
+        <span class="tile-label">CALIBRATION</span>
+        <span class="tile-value" id="tile-cal-val">Not calibrated · tap to run</span>
+        <span class="tile-detail" id="tile-cal-detail"></span>
+      </button>
+
       <button class="tile tile-wide" data-sheet="p-storage">
         <span class="tile-label">DATA & BACKUP</span>
         <span class="tile-value" id="tile-storage-val">0 workouts · local only</span>
       </button>
 
-      <p class="muted small version-line">v0.6 · 2026-05-11d · web MVP · <a href="#" id="about-link">about</a></p>
+      <p class="muted small version-line">v0.8 · 2026-05-11f · web MVP · <a href="#" id="about-link">about</a></p>
 
       <nav class="tabbar">
         <a href="#/home" class="tab">HOME</a>
@@ -642,6 +822,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="app.js?v=20260511d" type="module"></script>
+  <script src="app.js?v=20260511f" type="module"></script>
 </body>
 </html>
