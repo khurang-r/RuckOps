@@ -88,8 +88,10 @@ const Units = {
   },
   formatPace(secondsPerUnit) {
     if (!isFinite(secondsPerUnit) || secondsPerUnit <= 0) return '--:--';
-    const m = Math.floor(secondsPerUnit / 60);
-    const s = Math.round(secondsPerUnit % 60);
+    // Round total first to avoid e.g. 9:60 from 599.999 input.
+    const total = Math.round(secondsPerUnit);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
     return `${m}:${String(s).padStart(2, '0')}`;
   },
   formatDuration(ms) {
@@ -1279,7 +1281,8 @@ function renderPre(root) {
   let customRunSecs = 240;
   let customWalkSecs = 60;
   let goalType = 'none';
-  let goalDistM = 5000;          // 5 km / ~3.1 mi default
+  // Default goal: 3 mi (4828m) — clean grid value for the stepper.
+  let goalDistM = 3 * 1609.344;
   let goalTimeSec = 30 * 60;     // 30 min default
 
   const paceConfig = node.querySelector('#pace-config');
@@ -1295,8 +1298,12 @@ function renderPre(root) {
   const goalSuffix = node.querySelector('#goal-suffix');
 
   function formatMinSec(totalSec) {
-    const m = Math.floor(totalSec / 60);
-    const s = Math.round(totalSec % 60);
+    // Round the total first to avoid the classic "34:60" rollover when
+    // floating-point inputs produce e.g. 2099.999 (Math.floor(34.999)=34,
+    // Math.round(59.999)=60).
+    const total = Math.max(0, Math.round(totalSec));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
     return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
@@ -1436,15 +1443,29 @@ function renderPre(root) {
   }
 
   function getEffectiveSecPerMi() {
-    const ratio = getDerivedRatio();
-    const targetSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
-    if (ratio && ratio.runSecs > 0 && ratio.walkSecs > 0) {
-      const walkSecPerMi = 18 * 60;
-      const totalSec = ratio.runSecs + ratio.walkSecs;
-      return (ratio.runSecs * targetSecPerMi + ratio.walkSecs * walkSecPerMi) / totalSec;
+    // After the average-pace refactor: the user's target IS the average
+    // they want to hit. The app solves for the per-phase paces required
+    // to achieve it. So effective pace equals target pace directly.
+    // (Old code averaged target-as-run with walk pace, double-counting the
+    // walk segments and producing a slower-than-target ETA.)
+    if (method === 'off') {
+      return settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
     }
-    if (ratio && ratio.runSecs === 0) return 18 * 60;
-    return targetSecPerMi;
+    // Check feasibility: if the chosen average is impossible given the
+    // ratio, fall back to a realistic effective pace.
+    const targets = getPhaseTargets();
+    if (targets && !targets.feasible) {
+      // Use the best-case (run pace = some realistic fast pace) to compute
+      // a fall-back effective average. We use 6:00/mi as a generous run cap.
+      const ratio = getDerivedRatio();
+      if (ratio && ratio.runSecs > 0 && ratio.walkSecs > 0) {
+        const defaultWalk = method === 'tactical' ? 17 * 60 : 18 * 60;
+        const fastestRun = 6 * 60;
+        const cycleDistMi = ratio.runSecs / fastestRun + ratio.walkSecs / defaultWalk;
+        return (ratio.runSecs + ratio.walkSecs) / cycleDistMi;
+      }
+    }
+    return settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
   }
 
   function estimateGoalCompletionMs() {
@@ -1533,11 +1554,12 @@ function renderPre(root) {
     });
   });
 
-  // Goal stepper: distance ±0.1 unit, time ±5 min
+  // Goal stepper: distance ±0.1 unit (snapped to clean grid), time ±5 min
   node.querySelector('#goal-minus').addEventListener('click', () => {
     if (goalType === 'distance') {
       const inUnit = settings.units === 'metric' ? goalDistM / 1000 : goalDistM / 1609.344;
-      const next = Math.max(0.5, inUnit - 0.1);
+      const rounded = Math.round(inUnit * 10) / 10;
+      const next = Math.max(0.5, +(rounded - 0.1).toFixed(1));
       goalDistM = settings.units === 'metric' ? next * 1000 : next * 1609.344;
     } else if (goalType === 'time') {
       goalTimeSec = Math.max(5 * 60, goalTimeSec - 5 * 60);
@@ -1547,7 +1569,8 @@ function renderPre(root) {
   node.querySelector('#goal-plus').addEventListener('click', () => {
     if (goalType === 'distance') {
       const inUnit = settings.units === 'metric' ? goalDistM / 1000 : goalDistM / 1609.344;
-      const next = Math.min(50, inUnit + 0.1);
+      const rounded = Math.round(inUnit * 10) / 10;
+      const next = Math.min(50, +(rounded + 0.1).toFixed(1));
       goalDistM = settings.units === 'metric' ? next * 1000 : next * 1609.344;
     } else if (goalType === 'time') {
       goalTimeSec = Math.min(8 * 60 * 60, goalTimeSec + 5 * 60);
