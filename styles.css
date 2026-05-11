@@ -2119,3 +2119,26 @@ select {
   font-weight: 400;
 }
 .rpe-btn.selected .rpe-sub { color: var(--bg); }
+
+/* Cadence and dead-reckoning chips */
+.hr-chip.cadence {
+  background: rgba(74, 93, 35, 0.16);
+  color: var(--olive);
+  border-color: rgba(74, 93, 35, 0.3);
+}
+.hr-chip.cadence::before {
+  content: '👟';
+  animation: none;
+  font-size: 11px;
+}
+
+.hr-chip.dr-active {
+  background: rgba(244, 129, 31, 0.16);
+  color: var(--amber);
+  border-color: rgba(244, 129, 31, 0.35);
+  animation: pdr-pulse 1.2s ease-in-out infinite;
+}
+@keyframes pdr-pulse {
+  0%, 100% { opacity: 0.7; }
+  50%       { opacity: 1.0; }
+}
