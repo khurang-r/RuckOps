@@ -667,6 +667,32 @@ class LiveWorkout {
   }
 }
 
+// Compute the run-segment pace required to hit a target AVERAGE pace,
+// given an interval ratio and a fixed walk-segment pace.
+//
+// avgPaceSecPerMi = (Tr + Tw) / (Tr/R + Tw/W)
+//   →  R = avgPace * Tr / (Tr + Tw - avgPace * Tw / W)
+//
+// Returns { runPaceSecPerMi, walkPaceSecPerMi, feasible }.
+// Infeasible when the requested average is faster than what's achievable
+// even running infinitely fast during the run phase (i.e. denominator ≤ 0).
+function computeRunPaceForAvg(avgPaceSecPerMi, walkPaceSecPerMi, runSecs, walkSecs) {
+  if (runSecs <= 0) {
+    // Walk-only — average IS walk pace, no run target.
+    return { runPaceSecPerMi: null, walkPaceSecPerMi, feasible: avgPaceSecPerMi >= walkPaceSecPerMi };
+  }
+  if (walkSecs <= 0) {
+    // Run-only.
+    return { runPaceSecPerMi: avgPaceSecPerMi, walkPaceSecPerMi: null, feasible: true };
+  }
+  const denom = runSecs + walkSecs - avgPaceSecPerMi * walkSecs / walkPaceSecPerMi;
+  if (denom <= 0) {
+    return { runPaceSecPerMi: null, walkPaceSecPerMi, feasible: false };
+  }
+  const runPaceSecPerMi = avgPaceSecPerMi * runSecs / denom;
+  return { runPaceSecPerMi, walkPaceSecPerMi, feasible: true };
+}
+
 // -- Pacing intervals ---------------------------------------------------
 // Evidence-based interval engine. Two protocols + custom.
 //
@@ -1293,6 +1319,27 @@ function renderPre(root) {
     return null;
   }
 
+  // Returns the per-phase target paces required to hit the user-selected
+  // AVERAGE pace, given the interval ratio. Walk pace defaults by method.
+  function getPhaseTargets() {
+    if (method === 'off') {
+      // Steady — target IS run target.
+      const targetSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
+      return { runPaceSecPerMi: targetSecPerMi, walkPaceSecPerMi: null, feasible: true };
+    }
+    const ratio = getDerivedRatio();
+    if (!ratio) return null;
+    const avgSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
+    const defaultWalk = method === 'tactical' ? 17 * 60 : 18 * 60;
+    return computeRunPaceForAvg(avgSecPerMi, defaultWalk, ratio.runSecs, ratio.walkSecs);
+  }
+
+  function formatPaceSecPerMi(secPerMi) {
+    if (!isFinite(secPerMi) || secPerMi <= 0) return '--:--';
+    const secPerUnit = settings.units === 'metric' ? secPerMi / 1.609344 : secPerMi;
+    return formatMinSec(secPerUnit) + '/' + unitLabel().toLowerCase();
+  }
+
   function renderConfigurator() {
     paceConfig.classList.toggle('hidden', method === 'off');
     customConfig.classList.toggle('hidden', method !== 'custom');
@@ -1300,13 +1347,20 @@ function renderPre(root) {
     runValEl.textContent = formatMinSec(customRunSecs);
     walkValEl.textContent = formatMinSec(customWalkSecs);
 
-    // Pace-derived ratio display
+    // Compute per-phase targets and display them.
     const ratio = getDerivedRatio();
-    if (ratio && method !== 'off' && method !== 'custom') {
+    const targets = getPhaseTargets();
+
+    if (ratio && targets) {
       const r = formatMinSec(ratio.runSecs);
       const w = formatMinSec(ratio.walkSecs);
-      let txt = `→ ${r} run / ${w} walk`;
+      let txt = `Intervals: ${r} run / ${w} walk`;
       if (ratio.advisory) txt += ` · ${ratio.advisory}`;
+      if (!targets.feasible) {
+        txt += ` · ⚠ avg too fast — even infinite run pace can't compensate for the walk segments`;
+      } else if (targets.runPaceSecPerMi != null && targets.walkPaceSecPerMi != null) {
+        txt += `\n→ Run @ ${formatPaceSecPerMi(targets.runPaceSecPerMi)} · Walk @ ${formatPaceSecPerMi(targets.walkPaceSecPerMi)} to average ${formatMinSec(paceSecPerUnit)}/${unitLabel().toLowerCase()}`;
+      }
       paceDerivedEl.textContent = txt;
     } else {
       paceDerivedEl.textContent = '';
@@ -1568,21 +1622,18 @@ function renderPre(root) {
     // Hand off live workout via window-scoped state.
     const lw = new LiveWorkout({ mode, packWeightKg: packKg });
     const ratio = getDerivedRatio();
-    if (ratio && (ratio.runSecs > 0 || ratio.walkSecs > 0)) {
-      // Per-method walk pace: tactical is brisk (17:00/mi); Galloway and
-      // custom default to 18:00/mi (3.3 mph). Run pace = user's target.
-      const runPaceSecPerMi = settings.units === 'metric'
-        ? paceSecPerUnit * 1.609344
-        : paceSecPerUnit;
-      const walkPaceSecPerMi = method === 'tactical' ? 17 * 60 : 18 * 60;
+    const targets = getPhaseTargets();
+    if (ratio && (ratio.runSecs > 0 || ratio.walkSecs > 0) && targets) {
       lw.pacingPlan = new PacingPlan({
         runSecs: ratio.runSecs,
         walkSecs: ratio.walkSecs,
-        runPaceSecPerMi,
-        walkPaceSecPerMi
+        // Use the COMPUTED run pace so the user actually hits their average.
+        runPaceSecPerMi: targets.runPaceSecPerMi,
+        walkPaceSecPerMi: targets.walkPaceSecPerMi
       });
     }
     if (method !== 'off') {
+      // Save AVERAGE target on the workout for goal-status comparisons.
       lw.targetPaceSecPerMi = settings.units === 'metric'
         ? paceSecPerUnit * 1.609344
         : paceSecPerUnit;
