@@ -333,6 +333,12 @@ class LiveWorkout {
       if (document.visibilityState === 'visible' && this.status === 'running' && !this.wakeLock) {
         this.acquireWakeLock();
       }
+      // Safari sometimes suspends AudioContext on tab backgrounding. Resume.
+      const sc = window.__soundCoach;
+      if (sc && sc.audioCtx && sc.audioCtx.state === 'suspended'
+          && document.visibilityState === 'visible') {
+        sc.audioCtx.resume().catch(() => {});
+      }
     };
     document.addEventListener('visibilitychange', this._visHandler);
 
@@ -1187,31 +1193,72 @@ class SoundCoach {
     this.unlocked = false;
   }
 
-  // Call this on a user gesture (the START button) to unlock audio + speech.
-  // Without this, iOS Safari silently rejects both APIs.
+  // Call this on a user gesture (the START button or TEST button) to unlock
+  // audio + speech. Critical for iOS Safari which suspends AudioContext until
+  // a real sound plays inside a user-gesture handler. Without this, every
+  // subsequent beep silently fails.
   unlock() {
     if (this.unlocked) return;
+    let audioOK = false;
     try {
-      if (typeof window !== 'undefined' && 'AudioContext' in window) {
-        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (Ctor) {
+        this.audioCtx = new Ctor();
+        // Resume the context — required on iOS and many Android browsers.
+        if (this.audioCtx.state === 'suspended') {
+          this.audioCtx.resume().catch(() => {});
+        }
+        // Play a 1-sample silent buffer to fully unlock the audio path.
+        // Empty AudioContext.resume() alone doesn't always work on iOS;
+        // playing an actual (silent) source does.
+        const buffer = this.audioCtx.createBuffer(1, 1, 22050);
+        const source = this.audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.audioCtx.destination);
+        source.start(0);
+        audioOK = true;
       }
-    } catch {}
+    } catch (e) {
+      console.warn('audio unlock failed', e);
+    }
     try {
       if ('speechSynthesis' in window) {
-        const u = new SpeechSynthesisUtterance('');
-        u.volume = 0;
+        // iOS Safari needs a real utterance (not empty) to unlock the speech
+        // engine. We cancel any queued utterance first to clear stale state.
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(' ');
+        u.volume = 0.01;
+        u.rate = 2.0;
         window.speechSynthesis.speak(u);
       }
-    } catch {}
-    this.unlocked = true;
+    } catch (e) {
+      console.warn('speech unlock failed', e);
+    }
+    this.unlocked = audioOK;
+    return audioOK;
   }
 
-  // Low-level beep at a frequency for a duration. Type: 'sine' (soft) or
-  // 'triangle' (sharper). Volume from 0.0–1.0.
+  // Plays an audible test tone + speech. Returns a promise so the UI can
+  // show success/failure feedback.
+  test() {
+    this.unlock();
+    // Audible confirmation beep
+    this.beep(660, 200, { type: 'sine', volume: 0.5 });
+    setTimeout(() => this.beep(880, 200, { type: 'sine', volume: 0.5 }), 220);
+    // Speech check
+    setTimeout(() => this.say('Sound check', { urgent: true }), 500);
+  }
+
+  // Low-level beep at a frequency for a duration. Always re-checks that
+  // the audio context is running (Safari sometimes re-suspends after a
+  // backgrounding event).
   beep(freq, durationMs, { type = 'sine', volume = 0.4 } = {}) {
     if (!this.useBeeps || !this.audioCtx) return;
     try {
       const ctx = this.audioCtx;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = type;
@@ -1219,14 +1266,15 @@ class SoundCoach {
       gain.gain.value = 0;
       osc.connect(gain).connect(ctx.destination);
       const now = ctx.currentTime;
-      // Quick attack + sustain + decay so the click isn't harsh.
       gain.gain.setValueAtTime(0, now);
       gain.gain.linearRampToValueAtTime(volume, now + 0.01);
       gain.gain.setValueAtTime(volume, now + (durationMs / 1000) - 0.05);
       gain.gain.linearRampToValueAtTime(0, now + (durationMs / 1000));
       osc.start(now);
       osc.stop(now + (durationMs / 1000));
-    } catch {}
+    } catch (e) {
+      console.warn('beep failed', e);
+    }
   }
 
   // Three quick ascending beeps — universal "attention" pattern.
@@ -1237,20 +1285,24 @@ class SoundCoach {
     });
   }
 
-  // Speak a phrase. Cancels any queued speech so the latest cue wins.
-  // Falls back silently if speech is unavailable or blocked.
+  // Speak a phrase. Cancels any queued speech if urgent. Falls back silently
+  // if speech is unavailable. Handles Safari's paused-engine bug.
   say(text, { rate = 1.0, urgent = false } = {}) {
     if (this.verbosity === SOUND_OFF) return;
     try {
-      if ('speechSynthesis' in window) {
-        if (urgent) window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(text);
-        u.rate = rate;
-        u.volume = 1.0;
-        u.pitch = 1.0;
-        window.speechSynthesis.speak(u);
-      }
-    } catch {}
+      if (!('speechSynthesis' in window)) return;
+      const synth = window.speechSynthesis;
+      // Safari sometimes leaves the engine paused after a tab switch.
+      if (synth.paused) synth.resume();
+      if (urgent) synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = rate;
+      u.volume = 1.0;
+      u.pitch = 1.0;
+      synth.speak(u);
+    } catch (e) {
+      console.warn('speech failed', e);
+    }
   }
 
   // Haptic (mobile only).
@@ -2147,6 +2199,27 @@ function renderPre(root) {
     preAnt.addEventListener('change', saveCoaching);
   }
 
+  // Test sound button — inside the coaching sheet. Clicking is a user gesture,
+  // so it's the right place to unlock audio context + speech engine.
+  const preTest = node.querySelector('#pre-test-sound');
+  if (preTest) {
+    preTest.addEventListener('click', () => {
+      // Reuse existing soundcoach if present, otherwise spin up a temp one.
+      let sc = window.__soundCoach;
+      if (!sc) {
+        const cur = loadSettings();
+        sc = new SoundCoach({
+          verbosity: cur.voiceCues || 'full',
+          useBeeps: cur.soundEffects !== false,
+          units: cur.units
+        });
+        window.__soundCoach = sc;
+      }
+      sc.test();
+      toast('Playing test sound', 'info');
+    });
+  }
+
   // GPS probe loop. simple watch.
   const gpsStatus = node.querySelector('#gps-status');
   const startBtn = node.querySelector('#begin-tracking');
@@ -2291,6 +2364,15 @@ function renderPre(root) {
       units: settings.units
     });
     sc.unlock();
+    // Fire an immediate confirmation cue so the user knows sound works.
+    // This is INSIDE the user-gesture click handler, so audio is unlocked.
+    if (settings.voiceCues !== 'off') {
+      setTimeout(() => sc.say('Started', { urgent: true }), 200);
+    }
+    if (settings.soundEffects !== false) {
+      sc.beep(660, 100, { type: 'sine', volume: 0.4 });
+      setTimeout(() => sc.beep(880, 150, { type: 'sine', volume: 0.4 }), 120);
+    }
     window.__soundCoach = sc;
 
     window.__liveWorkout = lw;
@@ -2845,6 +2927,25 @@ function renderProfile(root) {
   voiceSel.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Voice cues: ' + voiceSel.value, 'success'); });
   soundsToggle.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Sound effects ' + (soundsToggle.checked ? 'on' : 'off'), 'success'); });
   antSel.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Anticipation: ' + (antSel.value === '0' ? 'off' : antSel.value + 's'), 'success'); });
+
+  // Test sound button on profile
+  const profileTest = node.querySelector('#profile-test-sound');
+  if (profileTest) {
+    profileTest.addEventListener('click', () => {
+      let sc = window.__soundCoach;
+      if (!sc) {
+        const cur = loadSettings();
+        sc = new SoundCoach({
+          verbosity: cur.voiceCues || 'full',
+          useBeeps: cur.soundEffects !== false,
+          units: cur.units
+        });
+        window.__soundCoach = sc;
+      }
+      sc.test();
+      toast('Playing test sound', 'info');
+    });
+  }
 
   // ===== STORAGE & BACKUP =====
   // Populate storage stats panel.
