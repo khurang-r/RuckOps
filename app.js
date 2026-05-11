@@ -51,7 +51,10 @@ function defaultSettings() {
     units: 'imperial',
     bodyWeight: null,
     defaultPackWeight: 35,
-    autoPause: true
+    autoPause: true,
+    voiceCues: 'full',      // 'off' | 'minimal' | 'full' | 'verbose'
+    soundEffects: true,
+    anticipationSec: 10
   };
 }
 
@@ -486,14 +489,30 @@ class LiveWorkout {
         this.pause();
         toast('AUTO-PAUSED', 'info');
       }
-      // Pacing plan: check for phase transition (run/walk intervals).
+      // Pacing plan: phase change + anticipation cue.
       if (this.pacingPlan) {
         const result = this.pacingPlan.tick(this.elapsedMs, this.distanceM);
-        if (result.phase !== this.currentPhase) {
+        const sc = window.__soundCoach;
+        if (result && result.phase !== this.currentPhase) {
+          // Real transition: fire phase-change cue.
           this.currentPhase = result.phase;
-          // Reset per-phase pace buffer so we measure pace within this phase.
-          this.phaseBuffer = [];
-          fireCue(result.phase);
+          this.phaseBuffer = []; // reset per-phase pace
+          if (sc) sc.onPhaseChange(result.phase, result.label);
+        } else if (sc && result && result.nextPhase && result.remainingMs > 0) {
+          // Anticipation cue: 10s before phase change (or whatever user picked).
+          const antMs = sc.anticipationSec * 1000;
+          const window_ = 1500; // tolerance — only fire once per transition
+          if (result.remainingMs <= antMs && result.remainingMs > antMs - window_) {
+            const transitionId = result.phaseIndex + '->' + result.nextPhase;
+            if (sc.lastAnticipated !== transitionId) {
+              sc.lastAnticipated = transitionId;
+              sc.onPhaseAnticipation(
+                result.nextPhase,
+                Math.round(result.remainingMs / 1000),
+                result.nextLabel
+              );
+            }
+          }
         }
       }
       // Fuel coach: tick once per second; fire alert if due.
@@ -502,6 +521,28 @@ class LiveWorkout {
         if (alert && alert !== this.pendingFuelAlert) {
           this.pendingFuelAlert = alert;
           fireFuelCue(alert);
+        }
+      }
+      // Milestone announcements (mile/km splits).
+      const sc = window.__soundCoach;
+      if (sc) {
+        // Compute last split pace
+        const unitM = sc.units === 'metric' ? 1000 : 1609.344;
+        const currentMile = Math.floor(this.distanceM / unitM);
+        if (currentMile > (this._lastAnnouncedMile || 0)) {
+          // Split pace = time since last split / unitM
+          const splitStart = this._lastSplitElapsedMs || 0;
+          const splitDuration = this.elapsedMs - splitStart;
+          const splitSecPerUnit = (splitDuration / 1000) / 1; // 1 unit covered
+          sc.onMilestone(this.distanceM, splitSecPerUnit, this.elapsedMs);
+          this._lastAnnouncedMile = currentMile;
+          this._lastSplitElapsedMs = this.elapsedMs;
+        }
+        // GPS lost/recovered
+        if (this.isGpsLost()) {
+          sc.onGpsLost();
+        } else if (sc._gpsLostFired) {
+          sc.onGpsRecovered();
         }
       }
     }
@@ -586,32 +627,59 @@ class LiveWorkout {
     return null;
   }
 
-  // Returns 'on-track' | 'ahead' | 'behind' | null based on projected vs goal.
-  getGoalStatus(currentSecPerMi) {
-    if (!currentSecPerMi) return null;
+  // Returns the CUMULATIVE average pace (seconds per unit). This is the
+  // pace you've actually held for the whole session — stable, slow to react.
+  // Use this for goal-completion projections, not rolling pace.
+  getAvgPaceSecPerUnit(units) {
+    if (this.distanceM < MIN_DISTANCE_FOR_PACE_M) return null;
+    const distUnit = units === 'metric' ? this.distanceM / 1000 : this.distanceM / 1609.344;
+    return (this.elapsedMs / 1000) / distUnit;
+  }
+
+  // Status with hysteresis: cumulative average projected to goal end.
+  // - "ahead" requires projected distance > goal + 1% AND held for 20s
+  // - "behind" requires projected < goal - 1% AND held for 20s
+  // - otherwise "on-track"
+  // The hysteresis prevents the chip from flickering on every GPS update.
+  getGoalStatus(_unusedNowParam) {
+    const avgSecPerMi = this.getAvgPaceSecPerUnit('imperial');
+    if (!avgSecPerMi) return null;
+    let proposed = null;
     if (this.goalDistM && this.targetTotalMs) {
-      const projectedTotalMi = this.distanceM / 1609.344 +
-        ((this.targetTotalMs - this.elapsedMs) / 1000) / currentSecPerMi;
-      const goalMi = this.goalDistM / 1609.344;
-      const diff = projectedTotalMi - goalMi;
-      if (Math.abs(diff) < 0.05) return 'on-track';
-      return diff > 0 ? 'ahead' : 'behind';
+      // Project: at current avg, how long will it take to cover goalDistM?
+      const projectedTotalSec = (this.goalDistM / 1609.344) * avgSecPerMi;
+      const projectedTotalMs = projectedTotalSec * 1000;
+      const diffMs = projectedTotalMs - this.targetTotalMs;
+      const tolMs = this.targetTotalMs * 0.01;  // ±1%
+      if      (diffMs >  tolMs) proposed = 'behind';
+      else if (diffMs < -tolMs) proposed = 'ahead';
+      else                       proposed = 'on-track';
+    } else if (this.goalTimeMs && this.goalProjectedDistanceM) {
+      // Project: at current avg, how far will we cover in goalTimeMs?
+      const projectedMi = (this.goalTimeMs / 1000) / avgSecPerMi;
+      const projectedM = projectedMi * 1609.344;
+      const diffM = projectedM - this.goalProjectedDistanceM;
+      const tolM = this.goalProjectedDistanceM * 0.01;
+      if      (diffM < -tolM) proposed = 'behind';
+      else if (diffM >  tolM) proposed = 'ahead';
+      else                     proposed = 'on-track';
+    } else {
+      return null;
     }
-    if (this.goalTimeMs && this.goalProjectedDistanceM) {
-      // Time-based goal — we WILL stop at goalTimeMs, so the question is
-      // whether projected distance at current pace meets/exceeds the
-      // original projected distance (the implicit "target distance" set at
-      // pre-workout).
-      const remainingMs = this.goalTimeMs - this.elapsedMs;
-      if (remainingMs <= 0) return this.distanceM >= this.goalProjectedDistanceM ? 'on-track' : 'behind';
-      const projectedTotalMi = this.distanceM / 1609.344 +
-        (remainingMs / 1000) / currentSecPerMi;
-      const goalMi = this.goalProjectedDistanceM / 1609.344;
-      const diff = projectedTotalMi - goalMi;
-      if (Math.abs(diff) < 0.05) return 'on-track';
-      return diff > 0 ? 'ahead' : 'behind';
+
+    // Hysteresis: hold the proposed state for 20s before committing.
+    const now = Date.now();
+    if (proposed !== this._proposedStatus) {
+      this._proposedStatus = proposed;
+      this._proposedStatusSince = now;
     }
-    return null;
+    if (!this._committedStatus) {
+      this._committedStatus = proposed;
+    } else if (proposed !== this._committedStatus
+               && now - this._proposedStatusSince >= 20000) {
+      this._committedStatus = proposed;
+    }
+    return this._committedStatus;
   }
 
   async end() {
@@ -779,51 +847,147 @@ function injuryRiskWarning(method, paceSecPerMi, packLbs) {
   return null;
 }
 
+// -- Pacing intervals ---------------------------------------------------
+// Plans are now sequence-based: an ordered list of phases, each with its
+// own duration, kind (work/recovery), label, and target pace. This makes
+// it trivial to add variable-phase workouts (Norwegian 4x4, Pyramid, etc.)
+// alongside the simple repeating-cycle plans (Galloway, Tactical, Custom).
+//
+// EVIDENCE-BASED MODES:
+// - Galloway (Galloway, 1978): run-walk cycles, ~50% injury reduction
+// - Tactical Ruck Shuffle (USMC/Army): scales walk segments by pack weight
+// - Norwegian 4x4 (Helgerud et al. 2007, Eur J Appl Physiol): 4×(4min hard /
+//   3min easy), gold standard for VO2max gains (5.5% over 8 weeks)
+// - Pyramid (mid-distance running canon): 1-2-3-2-1 min with equal recovery
+// - Fartlek (Holmér, 1937): randomized speed play for variety/adaptation
+
 class PacingPlan {
-  // runPaceSecPerMi, walkPaceSecPerMi: target paces to show in the live banner.
-  // Defaults: walk pace ~18:00/mi (3.3 mph, brisk walk); run pace must be set.
-  constructor({ runSecs, walkSecs, runPaceSecPerMi, walkPaceSecPerMi }) {
-    this.runSecs = Math.max(0, runSecs || 0);
-    this.walkSecs = Math.max(0, walkSecs || 0);
-    this.runPaceSecPerMi = runPaceSecPerMi || null;
-    this.walkPaceSecPerMi = walkPaceSecPerMi || 18 * 60;
+  constructor({ sequence, mode = 'loop', label = '' }) {
+    // sequence: array of { kind: 'work'|'recovery', durationMs, label, targetSecPerMi }
+    // mode: 'loop' (repeat forever) | 'finite' (single pass then steady)
+    this.sequence = sequence;
+    this.mode = mode;
+    this.label = label;
+    this.totalMs = sequence.reduce((a, p) => a + p.durationMs, 0);
   }
 
-  tick(elapsedMs /*, distM */) {
-    if (this.runSecs === 0) {
-      return {
-        phase: 'walk',
-        remainingMs: 0,
-        phaseLengthMs: this.walkSecs * 1000,
-        targetSecPerMi: this.walkPaceSecPerMi
-      };
-    }
-    if (this.walkSecs === 0) {
-      return {
-        phase: 'run',
-        remainingMs: 0,
-        phaseLengthMs: this.runSecs * 1000,
-        targetSecPerMi: this.runPaceSecPerMi
-      };
-    }
-    const cycleMs = (this.runSecs + this.walkSecs) * 1000;
-    const intoCycle = elapsedMs % cycleMs;
-    const runMs = this.runSecs * 1000;
-    if (intoCycle < runMs) {
-      return {
-        phase: 'run',
-        remainingMs: runMs - intoCycle,
-        phaseLengthMs: runMs,
-        targetSecPerMi: this.runPaceSecPerMi
-      };
-    }
-    return {
-      phase: 'walk',
-      remainingMs: cycleMs - intoCycle,
-      phaseLengthMs: this.walkSecs * 1000,
-      targetSecPerMi: this.walkPaceSecPerMi
-    };
+  // For backward-compat / fuel coach reading runSecs/walkSecs.
+  get runSecs() {
+    const w = this.sequence.find(p => p.kind === 'work');
+    return w ? Math.round(w.durationMs / 1000) : 0;
   }
+  get walkSecs() {
+    const r = this.sequence.find(p => p.kind === 'recovery');
+    return r ? Math.round(r.durationMs / 1000) : 0;
+  }
+
+  // Returns the current-phase descriptor and a NEXT-phase hint for anticipation.
+  // { phase, kind, label, targetSecPerMi, remainingMs, phaseLengthMs,
+  //   phaseIndex, totalPhases, nextPhase, nextLabel, isComplete }
+  tick(elapsedMs /*, distM */) {
+    if (this.mode === 'finite' && elapsedMs >= this.totalMs) {
+      return {
+        phase: 'run', kind: 'work', label: 'COOL DOWN',
+        targetSecPerMi: null, remainingMs: 0, phaseLengthMs: 0,
+        phaseIndex: this.sequence.length, totalPhases: this.sequence.length,
+        nextPhase: null, nextLabel: null, isComplete: true
+      };
+    }
+    const intoSeq = this.mode === 'loop' ? elapsedMs % this.totalMs : elapsedMs;
+    let acc = 0;
+    for (let i = 0; i < this.sequence.length; i++) {
+      const phase = this.sequence[i];
+      if (intoSeq < acc + phase.durationMs) {
+        const next = this.sequence[(i + 1) % this.sequence.length];
+        const isLast = (i === this.sequence.length - 1);
+        return {
+          phase: phase.kind === 'work' ? 'run' : 'walk',
+          kind: phase.kind,
+          label: phase.label || (phase.kind === 'work' ? 'RUN' : 'WALK'),
+          targetSecPerMi: phase.targetSecPerMi || null,
+          remainingMs: (acc + phase.durationMs) - intoSeq,
+          phaseLengthMs: phase.durationMs,
+          phaseIndex: i,
+          totalPhases: this.sequence.length,
+          nextPhase: (isLast && this.mode === 'finite') ? null
+                   : (next.kind === 'work' ? 'run' : 'walk'),
+          nextLabel: (isLast && this.mode === 'finite') ? null
+                   : (next.label || (next.kind === 'work' ? 'RUN' : 'WALK')),
+          isComplete: false
+        };
+      }
+      acc += phase.durationMs;
+    }
+    return null;
+  }
+}
+
+// ----- Plan builders --------------------------------------------------
+
+function buildGallowayPlan({ runSecs, walkSecs, runPaceSecPerMi, walkPaceSecPerMi }) {
+  return new PacingPlan({
+    label: 'GALLOWAY',
+    mode: 'loop',
+    sequence: [
+      { kind: 'work',     durationMs: runSecs * 1000,  label: 'RUN',  targetSecPerMi: runPaceSecPerMi },
+      { kind: 'recovery', durationMs: walkSecs * 1000, label: 'WALK', targetSecPerMi: walkPaceSecPerMi }
+    ]
+  });
+}
+
+function buildTacticalPlan({ runSecs, walkSecs, runPaceSecPerMi, walkPaceSecPerMi }) {
+  // Same shape as Galloway, different walk pace and label.
+  return new PacingPlan({
+    label: 'TACTICAL',
+    mode: 'loop',
+    sequence: [
+      { kind: 'work',     durationMs: runSecs * 1000,  label: 'SHUFFLE', targetSecPerMi: runPaceSecPerMi },
+      { kind: 'recovery', durationMs: walkSecs * 1000, label: 'MARCH',   targetSecPerMi: walkPaceSecPerMi }
+    ]
+  });
+}
+
+// Norwegian 4x4 (Helgerud et al. 2007). 4 sets of 4min hard / 3min recovery.
+// Total 28 min. Hard = 90-95% HRmax (approx target pace minus 30s).
+// Recovery = 70% HRmax (easy jog, ~target + 90s).
+function buildNorwegianPlan({ workPaceSecPerMi, recoveryPaceSecPerMi }) {
+  const phases = [];
+  for (let i = 1; i <= 4; i++) {
+    phases.push({ kind: 'work',     durationMs: 4 * 60 * 1000, label: `WORK ${i}/4`, targetSecPerMi: workPaceSecPerMi });
+    if (i < 4) {
+      phases.push({ kind: 'recovery', durationMs: 3 * 60 * 1000, label: `EASY ${i}/3`, targetSecPerMi: recoveryPaceSecPerMi });
+    } else {
+      phases.push({ kind: 'recovery', durationMs: 5 * 60 * 1000, label: 'COOL DOWN', targetSecPerMi: recoveryPaceSecPerMi });
+    }
+  }
+  return new PacingPlan({ label: 'NORWEGIAN 4×4', mode: 'finite', sequence: phases });
+}
+
+// Pyramid: 1-2-3-2-1 min hard with matched recovery. ~18 min total.
+function buildPyramidPlan({ workPaceSecPerMi, recoveryPaceSecPerMi }) {
+  const phases = [];
+  const ladder = [1, 2, 3, 2, 1];
+  for (let i = 0; i < ladder.length; i++) {
+    const min = ladder[i];
+    phases.push({ kind: 'work',     durationMs: min * 60 * 1000, label: `WORK ${min}m`, targetSecPerMi: workPaceSecPerMi });
+    phases.push({ kind: 'recovery', durationMs: min * 60 * 1000, label: 'REST',         targetSecPerMi: recoveryPaceSecPerMi });
+  }
+  return new PacingPlan({ label: 'PYRAMID', mode: 'finite', sequence: phases });
+}
+
+// Fartlek: 10 random surge/easy pairs. Surges 30-90s, easy 60-150s.
+// Loops so the workout continues with a fresh random sequence each cycle.
+function buildFartlekPlan({ workPaceSecPerMi, recoveryPaceSecPerMi, seed }) {
+  const phases = [];
+  let s = seed || (Date.now() & 0x7fffffff);
+  const rand = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (let i = 0; i < 10; i++) {
+    const workMs = (30 + Math.floor(rand() * 60)) * 1000;
+    const restMs = (60 + Math.floor(rand() * 90)) * 1000;
+    phases.push({ kind: 'work',     durationMs: workMs, label: 'SURGE', targetSecPerMi: workPaceSecPerMi });
+    phases.push({ kind: 'recovery', durationMs: restMs, label: 'EASY',  targetSecPerMi: recoveryPaceSecPerMi });
+  }
+  return new PacingPlan({ label: 'FARTLEK', mode: 'loop', sequence: phases });
 }
 
 // -- Fuel & hydration coach --------------------------------------------
@@ -936,37 +1100,219 @@ function fuelPlanEstimate({ durationMs, packKg }) {
   };
 }
 
-// Fire vibration + speech cue on phase change. Best-effort; silently
-// degrades if either API is unavailable (older browsers, iOS restrictions).
-function fireCue(phase) {
-  try {
-    if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
-  } catch {}
-  try {
-    if ('speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance(phase === 'run' ? 'Run' : 'Walk');
-      u.rate = 1.1;
-      u.volume = 1.0;
-      window.speechSynthesis.speak(u);
+// -- SoundCoach: speech + audio cues -----------------------------------
+// Best-practice references:
+// - iOS Safari requires a user gesture to unlock speechSynthesis; we warm
+//   up with an empty utterance on the START button gesture.
+// - Web Audio API works without user gesture once a context is created in
+//   a user gesture. Beeps are more reliable than speech in noisy
+//   environments (wind, traffic) and across browsers.
+// - Coaching research (sports psychology) shows ANTICIPATION cues 5–10s
+//   before transitions improve athletic compliance and reduce abrupt
+//   pace shifts. We fire a "warning" beep + speech 10s before each phase
+//   change. Splits are announced at every mile/km boundary (Strava/Garmin
+//   standard).
+
+const SOUND_OFF      = 'off';
+const SOUND_MINIMAL  = 'minimal';   // phase transitions + fuel + GPS lost
+const SOUND_FULL     = 'full';      // + milestones (mile/km splits)
+const SOUND_VERBOSE  = 'verbose';   // + periodic pace/status announcements
+
+class SoundCoach {
+  constructor({ verbosity, anticipationSec, useBeeps, units }) {
+    this.verbosity = verbosity || SOUND_FULL;
+    this.anticipationSec = anticipationSec != null ? anticipationSec : 10;
+    this.useBeeps = useBeeps !== false;
+    this.units = units || 'imperial';
+    this.lastMilestone = 0;          // last announced mile/km
+    this.lastAnticipated = null;     // string ID of the last anticipated transition
+    this.lastVerboseAt = 0;          // ms elapsed at last verbose tick
+    this.audioCtx = null;
+    this.unlocked = false;
+  }
+
+  // Call this on a user gesture (the START button) to unlock audio + speech.
+  // Without this, iOS Safari silently rejects both APIs.
+  unlock() {
+    if (this.unlocked) return;
+    try {
+      if (typeof window !== 'undefined' && 'AudioContext' in window) {
+        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+    } catch {}
+    try {
+      if ('speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance('');
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+      }
+    } catch {}
+    this.unlocked = true;
+  }
+
+  // Low-level beep at a frequency for a duration. Type: 'sine' (soft) or
+  // 'triangle' (sharper). Volume from 0.0–1.0.
+  beep(freq, durationMs, { type = 'sine', volume = 0.4 } = {}) {
+    if (!this.useBeeps || !this.audioCtx) return;
+    try {
+      const ctx = this.audioCtx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.value = 0;
+      osc.connect(gain).connect(ctx.destination);
+      const now = ctx.currentTime;
+      // Quick attack + sustain + decay so the click isn't harsh.
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(volume, now + 0.01);
+      gain.gain.setValueAtTime(volume, now + (durationMs / 1000) - 0.05);
+      gain.gain.linearRampToValueAtTime(0, now + (durationMs / 1000));
+      osc.start(now);
+      osc.stop(now + (durationMs / 1000));
+    } catch {}
+  }
+
+  // Three quick ascending beeps — universal "attention" pattern.
+  triplet({ baseHz = 660, type = 'sine' } = {}) {
+    if (!this.useBeeps || !this.audioCtx) return;
+    [0, 150, 300].forEach((delay, i) => {
+      setTimeout(() => this.beep(baseHz + i * 100, 120, { type }), delay);
+    });
+  }
+
+  // Speak a phrase. Cancels any queued speech so the latest cue wins.
+  // Falls back silently if speech is unavailable or blocked.
+  say(text, { rate = 1.0, urgent = false } = {}) {
+    if (this.verbosity === SOUND_OFF) return;
+    try {
+      if ('speechSynthesis' in window) {
+        if (urgent) window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = rate;
+        u.volume = 1.0;
+        u.pitch = 1.0;
+        window.speechSynthesis.speak(u);
+      }
+    } catch {}
+  }
+
+  // Haptic (mobile only).
+  buzz(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch {}
+  }
+
+  // ----- Cue methods (called from LiveWorkout) -----
+
+  // Phase change ACTUALLY happens now (run -> walk or walk -> run).
+  onPhaseChange(phase, label) {
+    if (this.verbosity === SOUND_OFF) return;
+    if (phase === 'run') {
+      // Rising 2-beep pattern
+      this.beep(440, 100);
+      setTimeout(() => this.beep(660, 150), 130);
+      this.buzz([100, 60, 200]);
+      this.say(label || (phase === 'run' ? 'Run' : 'Walk'), { urgent: true });
+    } else {
+      // Falling 2-beep pattern
+      this.beep(660, 100);
+      setTimeout(() => this.beep(440, 150), 130);
+      this.buzz([200, 60, 100]);
+      this.say(label || 'Walk', { urgent: true });
     }
-  } catch {}
+    this.lastAnticipated = null;
+  }
+
+  // 10s warning before phase change. Single soft chime + speech.
+  onPhaseAnticipation(nextPhase, secsLeft, label) {
+    if (this.verbosity === SOUND_OFF) return;
+    this.beep(880, 80, { type: 'sine', volume: 0.3 });
+    this.buzz(50);
+    const txt = Math.round(secsLeft) + ' seconds to ' + (label || (nextPhase === 'run' ? 'run' : 'walk'));
+    this.say(txt);
+  }
+
+  // Fuel / hydration alert.
+  onFuelAlert(alert) {
+    if (this.verbosity === SOUND_OFF) return;
+    // Distinct 3-beep ascending pattern so user knows it's not a phase cue.
+    this.triplet({ baseHz: 523 });  // C5 base
+    this.buzz([200, 80, 200, 80, 200]);
+    const msg = alert.type === 'hydrate' ? 'Hydrate' : 'Time to fuel';
+    this.say(msg, { urgent: true });
+  }
+
+  // Mile/km split — announce at each unit boundary if verbosity >= FULL.
+  onMilestone(distM, paceSecPerUnitForLastSplit, elapsedMs) {
+    if (this.verbosity !== SOUND_FULL && this.verbosity !== SOUND_VERBOSE) return;
+    const unitM = this.units === 'metric' ? 1000 : 1609.344;
+    const completed = Math.floor(distM / unitM);
+    if (completed <= this.lastMilestone) return;
+    this.lastMilestone = completed;
+    // Sharp triplet for milestone — different timbre from fuel alert.
+    if (this.audioCtx) {
+      [0, 100, 200].forEach((delay, i) => {
+        setTimeout(() => this.beep(1000, 100, { type: 'triangle', volume: 0.35 }), delay);
+      });
+    }
+    this.buzz([80, 40, 80]);
+    const unitLabel = this.units === 'metric' ? 'kilometer' : 'mile';
+    let phrase = completed + ' ' + unitLabel + (completed > 1 ? 's' : '');
+    if (paceSecPerUnitForLastSplit && isFinite(paceSecPerUnitForLastSplit)) {
+      const m = Math.floor(paceSecPerUnitForLastSplit / 60);
+      const s = Math.round(paceSecPerUnitForLastSplit % 60);
+      phrase += '. Last split, ' + m + (s === 0 ? ' even' : ' ' + s);
+    }
+    this.say(phrase);
+  }
+
+  // Verbose periodic update — pace + status every 2 min, only in verbose mode.
+  onVerboseTick(elapsedMs, currentPaceSecPerMi, status) {
+    if (this.verbosity !== SOUND_VERBOSE) return;
+    if (elapsedMs - this.lastVerboseAt < 2 * 60 * 1000) return;
+    this.lastVerboseAt = elapsedMs;
+    if (!currentPaceSecPerMi || !isFinite(currentPaceSecPerMi)) return;
+    const unitPaceSec = this.units === 'metric'
+      ? currentPaceSecPerMi / 1.609344
+      : currentPaceSecPerMi;
+    const m = Math.floor(unitPaceSec / 60);
+    const s = Math.round(unitPaceSec % 60);
+    const unit = this.units === 'metric' ? 'per kilometer' : 'per mile';
+    let phrase = 'Current pace ' + m + (s === 0 ? ' even' : ' ' + s) + ' ' + unit;
+    if (status === 'on-track') phrase += '. On track.';
+    else if (status === 'ahead') phrase += '. You are ahead of target.';
+    else if (status === 'behind') phrase += '. You are behind target.';
+    this.say(phrase);
+  }
+
+  // GPS signal lost — softer cue, doesn't repeat constantly.
+  onGpsLost() {
+    if (this.verbosity === SOUND_OFF) return;
+    if (this._gpsLostFired && Date.now() - this._gpsLostFired < 60000) return;
+    this._gpsLostFired = Date.now();
+    this.beep(200, 200, { type: 'triangle', volume: 0.5 });
+    this.buzz([300]);
+    this.say('GPS signal lost');
+  }
+
+  onGpsRecovered() {
+    if (this._gpsLostFired) {
+      this.beep(800, 100, { type: 'sine', volume: 0.3 });
+      this.say('Signal restored');
+      this._gpsLostFired = null;
+    }
+  }
 }
 
-// Fuel/hydration alert cue. Stronger pattern than run/walk cues so user
-// notices through pocket/armband.
+// Backwards-compat shims for old call sites. LiveWorkout uses these names.
+function fireCue(phase) {
+  const sc = window.__soundCoach;
+  if (sc) sc.onPhaseChange(phase);
+}
+
 function fireFuelCue(alert) {
-  try {
-    if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 200]);
-  } catch {}
-  try {
-    if ('speechSynthesis' in window) {
-      const msg = alert.type === 'hydrate' ? 'Take a drink' : 'Time to fuel';
-      const u = new SpeechSynthesisUtterance(msg);
-      u.rate = 1.0;
-      u.volume = 1.0;
-      window.speechSynthesis.speak(u);
-    }
-  } catch {}
+  const sc = window.__soundCoach;
+  if (sc) sc.onFuelAlert(alert);
 }
 
 // -- Workouts repository ------------------------------------------------
@@ -1326,25 +1672,41 @@ function renderPre(root) {
     return null;
   }
 
-  // Returns the per-phase target paces required to hit the user-selected
-  // AVERAGE pace, given the interval ratio. Walk pace defaults by method.
+  // Returns the per-phase target paces. Behavior depends on method:
+  // - 'off', 'galloway', 'tactical', 'custom': user's pace IS the AVERAGE.
+  //   We solve for the run-segment pace required to hit it.
+  // - 'norwegian', 'pyramid', 'fartlek': user's pace IS the WORK pace
+  //   directly. Recovery pace is auto-derived.
   function getPhaseTargets() {
+    const userPaceSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
     if (method === 'off') {
-      // Steady — target IS run target.
-      const targetSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
-      return { runPaceSecPerMi: targetSecPerMi, walkPaceSecPerMi: null, feasible: true };
+      return { runPaceSecPerMi: userPaceSecPerMi, walkPaceSecPerMi: null, feasible: true, mode: 'pace' };
     }
+    if (method === 'norwegian' || method === 'pyramid' || method === 'fartlek') {
+      // Work pace = user's pick. Recovery = user pace + 90s (easy jog).
+      return {
+        runPaceSecPerMi: userPaceSecPerMi,
+        walkPaceSecPerMi: userPaceSecPerMi + 90,
+        feasible: true,
+        mode: 'effort'
+      };
+    }
+    // Pace-driven: galloway, tactical, custom.
     const ratio = getDerivedRatio();
     if (!ratio) return null;
-    const avgSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
     const defaultWalk = method === 'tactical' ? 17 * 60 : 18 * 60;
-    return computeRunPaceForAvg(avgSecPerMi, defaultWalk, ratio.runSecs, ratio.walkSecs);
+    const r = computeRunPaceForAvg(userPaceSecPerMi, defaultWalk, ratio.runSecs, ratio.walkSecs);
+    return { ...r, mode: 'pace' };
   }
 
   function formatPaceSecPerMi(secPerMi) {
     if (!isFinite(secPerMi) || secPerMi <= 0) return '--:--';
     const secPerUnit = settings.units === 'metric' ? secPerMi / 1.609344 : secPerMi;
     return formatMinSec(secPerUnit) + '/' + unitLabel().toLowerCase();
+  }
+
+  function isEffortMode(m) {
+    return m === 'norwegian' || m === 'pyramid' || m === 'fartlek';
   }
 
   function renderConfigurator() {
@@ -1354,11 +1716,31 @@ function renderPre(root) {
     runValEl.textContent = formatMinSec(customRunSecs);
     walkValEl.textContent = formatMinSec(customWalkSecs);
 
+    // Toggle pace label between AVERAGE TARGET (pace-driven) and WORK PACE (effort-driven).
+    const paceLabel = node.querySelector('#pace-label');
+    if (paceLabel) {
+      paceLabel.textContent = isEffortMode(method) ? 'WORK PACE (HARD EFFORT)' : 'AVERAGE TARGET PACE';
+    }
+
     // Compute per-phase targets and display them.
     const ratio = getDerivedRatio();
     const targets = getPhaseTargets();
 
-    if (ratio && targets) {
+    if (method === 'off') {
+      paceDerivedEl.textContent = '';
+    } else if (isEffortMode(method)) {
+      // Effort-driven: just display the work/recovery paces.
+      let txt = '';
+      if (method === 'norwegian') {
+        txt = `Plan: 4 × (4 min @ ${formatPaceSecPerMi(targets.runPaceSecPerMi)}, 3 min easy)\nTotal ~28 min. Easy: ${formatPaceSecPerMi(targets.walkPaceSecPerMi)}`;
+      } else if (method === 'pyramid') {
+        txt = `Plan: 1-2-3-2-1 min work / equal rest\nWork @ ${formatPaceSecPerMi(targets.runPaceSecPerMi)}, rest @ ${formatPaceSecPerMi(targets.walkPaceSecPerMi)}`;
+      } else if (method === 'fartlek') {
+        txt = `Plan: random 30–90s surges / 60–150s easy\nSurge @ ${formatPaceSecPerMi(targets.runPaceSecPerMi)}, easy @ ${formatPaceSecPerMi(targets.walkPaceSecPerMi)}`;
+      }
+      paceDerivedEl.textContent = txt;
+    } else if (ratio && targets) {
+      // Pace-driven: galloway/tactical/custom — show the math.
       const r = formatMinSec(ratio.runSecs);
       const w = formatMinSec(ratio.walkSecs);
       let txt = `Intervals: ${r} run / ${w} walk`;
@@ -1644,22 +2026,45 @@ function renderPre(root) {
     }
     // Hand off live workout via window-scoped state.
     const lw = new LiveWorkout({ mode, packWeightKg: packKg });
-    const ratio = getDerivedRatio();
     const targets = getPhaseTargets();
-    if (ratio && (ratio.runSecs > 0 || ratio.walkSecs > 0) && targets) {
-      lw.pacingPlan = new PacingPlan({
-        runSecs: ratio.runSecs,
-        walkSecs: ratio.walkSecs,
-        // Use the COMPUTED run pace so the user actually hits their average.
-        runPaceSecPerMi: targets.runPaceSecPerMi,
-        walkPaceSecPerMi: targets.walkPaceSecPerMi
+    const userPaceSecPerMi = settings.units === 'metric'
+      ? paceSecPerUnit * 1.609344
+      : paceSecPerUnit;
+
+    // Build the PacingPlan based on method.
+    if (method === 'galloway' || method === 'tactical' || method === 'custom') {
+      const ratio = getDerivedRatio();
+      if (ratio && (ratio.runSecs > 0 || ratio.walkSecs > 0) && targets && targets.feasible) {
+        const builder = method === 'tactical' ? buildTacticalPlan : buildGallowayPlan;
+        lw.pacingPlan = builder({
+          runSecs: ratio.runSecs,
+          walkSecs: ratio.walkSecs,
+          runPaceSecPerMi: targets.runPaceSecPerMi,
+          walkPaceSecPerMi: targets.walkPaceSecPerMi
+        });
+      }
+    } else if (method === 'norwegian') {
+      lw.pacingPlan = buildNorwegianPlan({
+        workPaceSecPerMi: targets.runPaceSecPerMi,
+        recoveryPaceSecPerMi: targets.walkPaceSecPerMi
+      });
+    } else if (method === 'pyramid') {
+      lw.pacingPlan = buildPyramidPlan({
+        workPaceSecPerMi: targets.runPaceSecPerMi,
+        recoveryPaceSecPerMi: targets.walkPaceSecPerMi
+      });
+    } else if (method === 'fartlek') {
+      lw.pacingPlan = buildFartlekPlan({
+        workPaceSecPerMi: targets.runPaceSecPerMi,
+        recoveryPaceSecPerMi: targets.walkPaceSecPerMi
       });
     }
+
     if (method !== 'off') {
-      // Save AVERAGE target on the workout for goal-status comparisons.
-      lw.targetPaceSecPerMi = settings.units === 'metric'
-        ? paceSecPerUnit * 1.609344
-        : paceSecPerUnit;
+      // For pace-driven modes, target IS the average. For effort-driven modes,
+      // there's no meaningful "target average" — set it to null to disable
+      // the avg-based color cue and status chip.
+      lw.targetPaceSecPerMi = isEffortMode(method) ? null : userPaceSecPerMi;
     }
 
     // Compute expected total duration: used by fuel coach and goal status.
@@ -1690,6 +2095,18 @@ function renderPre(root) {
         expectedDurationMs
       });
     }
+
+    // Instantiate SoundCoach for this workout. Reads voice/sound prefs
+    // from settings. The unlock() call happens HERE inside the user-gesture
+    // handler — required for iOS Safari to allow audio + speech later.
+    const sc = new SoundCoach({
+      verbosity: settings.voiceCues || SOUND_FULL,
+      anticipationSec: settings.anticipationSec != null ? settings.anticipationSec : 10,
+      useBeeps: settings.soundEffects !== false,
+      units: settings.units
+    });
+    sc.unlock();
+    window.__soundCoach = sc;
 
     window.__liveWorkout = lw;
     lw.start();
@@ -1723,6 +2140,7 @@ function renderLive(root) {
   const distEl = node.querySelector('#live-distance');
   const durEl = node.querySelector('#live-duration');
   const paceEl = node.querySelector('#live-pace');
+  const avgPaceEl = node.querySelector('#live-avg-pace');
   const packEl = node.querySelector('#live-pack');
   const packStat = node.querySelector('#live-pack-stat');
   const pausedOverlay = node.querySelector('#paused-overlay');
@@ -1747,7 +2165,6 @@ function renderLive(root) {
     packEl.textContent = Units.formatWeight(live.packWeightKg, settings.units);
   }
 
-  // Fuel alert action handlers — wired once
   node.querySelector('#fuel-done').addEventListener('click', () => {
     live.ackFuel();
     toast('Logged', 'success');
@@ -1766,14 +2183,15 @@ function renderLive(root) {
     distEl.textContent = Units.formatDistance(live.distanceM, settings.units);
     durEl.textContent = Units.formatDuration(live.elapsedMs);
 
-    // Pace: rolling 30s window for "current pace" (matches Strava/Garmin
-    // behavior). Falls back to average pace if rolling window not yet ready.
+    // ROLLING pace (30s window) — "current effort". Noisy by design but
+    // responsive. This is what the user feels right now.
     const rolling = live.getRollingPaceSecPerUnit(settings.units);
     let currentSecPerUnit = null;
     if (rolling != null) {
       currentSecPerUnit = rolling;
       paceEl.textContent = Units.formatPace(rolling);
     } else if (live.distanceM > MIN_DISTANCE_FOR_PACE_M) {
+      // Fall back to cumulative average if rolling not yet warm.
       currentSecPerUnit = settings.units === 'metric'
         ? (live.elapsedMs / 1000) / (live.distanceM / 1000)
         : (live.elapsedMs / 1000) / (live.distanceM / 1609.344);
@@ -1782,43 +2200,56 @@ function renderLive(root) {
       paceEl.textContent = '--:--';
     }
 
-    // Pace color cue
+    // CUMULATIVE average pace — stable, used for goal-status projection.
+    const avgSecPerUnit = live.getAvgPaceSecPerUnit(settings.units);
+    if (avgSecPerUnit != null) {
+      avgPaceEl.textContent = Units.formatPace(avgSecPerUnit);
+    } else {
+      avgPaceEl.textContent = '--:--';
+    }
+
+    // Pace color cue on the ROLLING pace (current effort vs target).
     paceEl.classList.remove('on-target', 'slow', 'too-slow', 'too-fast');
     if (currentSecPerUnit != null && live.targetPaceSecPerMi != null) {
       const targetSec = settings.units === 'metric'
         ? live.targetPaceSecPerMi / 1.609344
         : live.targetPaceSecPerMi;
       const diff = currentSecPerUnit - targetSec;
-      if (diff > 30)        paceEl.classList.add('too-slow');
-      else if (diff > 10)   paceEl.classList.add('slow');
-      else if (diff < -15)  paceEl.classList.add('too-fast');
-      else                  paceEl.classList.add('on-target');
+      if      (diff > 30) paceEl.classList.add('too-slow');
+      else if (diff > 10) paceEl.classList.add('slow');
+      else if (diff < -15) paceEl.classList.add('too-fast');
+      else                 paceEl.classList.add('on-target');
     }
 
     pausedOverlay.classList.toggle('hidden', live.status !== 'paused');
     if (gpsChip) {
-      const sig = live.gpsSignal || 'searching';
-      gpsChip.className = 'gps-chip ' + sig;
-      gpsChip.textContent = '📡 ' + sig.toUpperCase();
+      if (live.isGpsLost()) {
+        gpsChip.className = 'gps-chip lost';
+        gpsChip.textContent = '⚠ SIGNAL LOST';
+      } else {
+        const sig = live.gpsSignal || 'searching';
+        gpsChip.className = 'gps-chip ' + sig;
+        gpsChip.textContent = '📡 ' + sig.toUpperCase();
+      }
     }
 
-    // Pacing banner
+    // Pacing banner — visible only if a plan is attached.
     if (live.pacingPlan && pacingBanner) {
       const result = live.pacingPlan.tick(live.elapsedMs, live.distanceM);
       pacingBanner.classList.remove('hidden');
       pacingBanner.classList.toggle('run', result.phase === 'run');
       pacingBanner.classList.toggle('walk', result.phase === 'walk');
-      pacingPhaseEl.textContent = result.phase === 'run' ? 'RUN' : 'WALK';
-      if (result.remainingMs != null) {
+      pacingPhaseEl.textContent = result.label || (result.phase === 'run' ? 'RUN' : 'WALK');
+      if (result.isComplete) {
+        pacingRemainingEl.textContent = 'COMPLETE';
+      } else if (result.remainingMs != null) {
         const s = Math.ceil(result.remainingMs / 1000);
         const mm = Math.floor(s / 60).toString().padStart(2, '0');
         const ss = (s % 60).toString().padStart(2, '0');
         pacingRemainingEl.textContent = mm + ':' + ss + ' LEFT';
-      } else {
-        pacingRemainingEl.textContent = '';
       }
 
-      // Target + current pace for THIS phase.
+      // Target + phase pace in the banner second row.
       const pacingTargetEl = node.querySelector('#pacing-target');
       const pacingCurrentEl = node.querySelector('#pacing-current');
       if (pacingTargetEl && pacingCurrentEl) {
@@ -1827,10 +2258,11 @@ function renderLive(root) {
         } else {
           pacingTargetEl.textContent = '';
         }
+        // Show phase-only pace (only samples within this phase) — more
+        // actionable than rolling, since intervals contaminate cross-phase.
         const phasePace = live.getPhasePaceSecPerUnit(settings.units);
         if (phasePace != null) {
-          pacingCurrentEl.textContent = 'current ' + Units.formatPace(phasePace);
-          // Color by phase pace vs target
+          pacingCurrentEl.textContent = 'phase ' + Units.formatPace(phasePace);
           pacingCurrentEl.classList.remove('on-target', 'slow', 'too-slow', 'too-fast');
           if (result.targetSecPerMi) {
             const targetSecPerUnit = settings.units === 'metric'
@@ -1843,7 +2275,7 @@ function renderLive(root) {
             else                 pacingCurrentEl.classList.add('on-target');
           }
         } else {
-          pacingCurrentEl.textContent = 'current --:--';
+          pacingCurrentEl.textContent = 'phase --:--';
           pacingCurrentEl.classList.remove('on-target', 'slow', 'too-slow', 'too-fast');
         }
       }
@@ -1851,13 +2283,8 @@ function renderLive(root) {
       pacingBanner.classList.add('hidden');
     }
 
-    // GPS lost watchdog: show in chip if no fix for > 15s.
-    if (live.isGpsLost() && gpsChip) {
-      gpsChip.className = 'gps-chip lost';
-      gpsChip.textContent = '⚠ SIGNAL LOST';
-    }
-
-    // Goal progress
+    // Goal progress + status. Uses CUMULATIVE average with hysteresis —
+    // stable, won't flicker between AHEAD/BEHIND every few seconds.
     if ((live.goalDistM || live.goalTimeMs) && goalProgress) {
       goalProgress.classList.remove('hidden');
       let pct, currentTxt, targetTxt;
@@ -1874,11 +2301,7 @@ function renderLive(root) {
       goalCurrentEl.textContent = currentTxt;
       goalTargetEl.textContent = targetTxt;
 
-      // Goal status chip
-      const currentSecPerMi = currentSecPerUnit
-        ? (settings.units === 'metric' ? currentSecPerUnit * 1.609344 : currentSecPerUnit)
-        : null;
-      const status = live.getGoalStatus(currentSecPerMi);
+      const status = live.getGoalStatus();
       goalStatusChip.classList.remove('on-track', 'ahead', 'behind');
       if (status) {
         goalStatusChip.classList.add(status);
@@ -1888,15 +2311,28 @@ function renderLive(root) {
         goalStatusChip.textContent = '';
       }
 
-      // Required pace hint (only when behind & we have enough data)
+      // Required pace hint — shown when BEHIND so user knows what to do.
       const req = live.getRequiredPaceSecPerMi();
-      if (req != null && status === 'behind' && currentSecPerMi != null) {
+      if (req != null && status === 'behind' && currentSecPerUnit != null) {
         requiredPaceHint.classList.remove('hidden');
+        const currentSecPerMi = settings.units === 'metric'
+          ? currentSecPerUnit * 1.609344
+          : currentSecPerUnit;
         const isUrgent = req < currentSecPerMi - 60;
         requiredPaceHint.classList.toggle('urgent', isUrgent);
         requiredPaceHint.textContent = 'Run ' + formatPaceSecPerUnit(req) + ' to recover';
       } else {
         requiredPaceHint.classList.add('hidden');
+      }
+
+      // Verbose voice tick: announce pace + status periodically (only in
+      // verbose mode; the SoundCoach itself rate-limits to once per 2 min).
+      const sc = window.__soundCoach;
+      if (sc && currentSecPerUnit != null) {
+        const currentSecPerMi = settings.units === 'metric'
+          ? currentSecPerUnit * 1.609344
+          : currentSecPerUnit;
+        sc.onVerboseTick(live.elapsedMs, currentSecPerMi, status);
       }
     } else if (goalProgress) {
       goalProgress.classList.add('hidden');
@@ -2146,6 +2582,9 @@ function renderProfile(root) {
   const packIn = node.querySelector('#set-packweight');
   const bwIn = node.querySelector('#set-bodyweight');
   const apToggle = node.querySelector('#set-autopause');
+  const voiceSel = node.querySelector('#set-voice');
+  const soundsToggle = node.querySelector('#set-sounds');
+  const antSel = node.querySelector('#set-anticipation');
 
   unitsSel.value = settings.units;
   packIn.value = Units.formatWeight(
@@ -2156,6 +2595,9 @@ function renderProfile(root) {
     bwIn.value = Math.round(Units.fromWeightInternal(settings.bodyWeight, settings.units));
   }
   apToggle.checked = !!settings.autoPause;
+  voiceSel.value = settings.voiceCues || 'full';
+  soundsToggle.checked = settings.soundEffects !== false;
+  antSel.value = String(settings.anticipationSec != null ? settings.anticipationSec : 10);
 
   function persist() {
     const u = unitsSel.value;
@@ -2165,27 +2607,21 @@ function renderProfile(root) {
       units: u,
       defaultPackWeight: pack,
       bodyWeight: isFinite(bw) && bw > 0 ? Units.toWeightInternal(bw, u) : null,
-      autoPause: apToggle.checked
+      autoPause: apToggle.checked,
+      voiceCues: voiceSel.value,
+      soundEffects: soundsToggle.checked,
+      anticipationSec: parseInt(antSel.value, 10) || 0
     });
     applyUnits(node, u);
   }
 
-  unitsSel.addEventListener('change', () => {
-    persist();
-    toast('Units updated', 'success');
-  });
-  packIn.addEventListener('change', () => {
-    persist();
-    toast('Pack weight saved', 'success');
-  });
-  bwIn.addEventListener('change', () => {
-    persist();
-    toast('Body weight saved', 'success');
-  });
-  apToggle.addEventListener('change', () => {
-    persist();
-    toast('Auto-pause ' + (apToggle.checked ? 'on' : 'off'), 'success');
-  });
+  unitsSel.addEventListener('change', () => { persist(); toast('Units updated', 'success'); });
+  packIn.addEventListener('change', () => { persist(); toast('Pack weight saved', 'success'); });
+  bwIn.addEventListener('change', () => { persist(); toast('Body weight saved', 'success'); });
+  apToggle.addEventListener('change', () => { persist(); toast('Auto-pause ' + (apToggle.checked ? 'on' : 'off'), 'success'); });
+  voiceSel.addEventListener('change', () => { persist(); toast('Voice cues: ' + voiceSel.value, 'success'); });
+  soundsToggle.addEventListener('change', () => { persist(); toast('Sound effects ' + (soundsToggle.checked ? 'on' : 'off'), 'success'); });
+  antSel.addEventListener('change', () => { persist(); toast('Anticipation: ' + (antSel.value === '0' ? 'off' : antSel.value + 's'), 'success'); });
 
   node.querySelector('#export-csv').addEventListener('click', () => {
     const all = Workouts.list();

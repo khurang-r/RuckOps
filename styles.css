@@ -705,8 +705,8 @@ body {
 
 .sub-metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
   margin-top: 6vh;
 }
 
@@ -715,7 +715,7 @@ body {
   flex-direction: column;
   gap: 4px;
   background: var(--surface);
-  padding: 14px 8px;
+  padding: 14px 4px;
   border-radius: 8px;
   align-items: center;
   min-height: 64px;
@@ -724,15 +724,15 @@ body {
 
 .sub-stat .label {
   font-family: 'Roboto Condensed', sans-serif;
-  font-size: 11px;
-  letter-spacing: 0.2em;
+  font-size: 10px;
+  letter-spacing: 0.15em;
   color: var(--muted);
 }
 
 .sub-stat .val {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
-  font-size: 24px;
+  font-size: 20px;
   color: var(--text);
 }
 
