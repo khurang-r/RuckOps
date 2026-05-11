@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css?v=20260511h" />
+  <link rel="stylesheet" href="styles.css?v=20260511i" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet" />
 </head>
@@ -437,6 +437,15 @@
                 <button class="stepper-btn" id="goal-plus" aria-label="Increase">+</button>
               </div>
               <p class="goal-eta" id="goal-eta"></p>
+              <!-- Goal-reached behavior: continue tracking or auto-end. -->
+              <div class="goal-behavior-row">
+                <span class="muted small">WHEN GOAL IS REACHED</span>
+                <div class="goal-behavior-options">
+                  <button class="goal-behavior-opt selected" data-behavior="continue">KEEP GOING</button>
+                  <button class="goal-behavior-opt" data-behavior="stop_at_goal">AUTO-END</button>
+                </div>
+                <p class="muted tiny" id="goal-behavior-hint">Track cooldown after hitting the goal.</p>
+              </div>
               <div class="fuel-plan-preview hidden" id="fuel-plan-preview">
                 <div class="row"><span class="label">Hydration</span><span class="val" id="fuel-plan-water"></span></div>
                 <div class="row"><span class="label">Fuel</span><span class="val" id="fuel-plan-carbs"></span></div>
@@ -690,7 +699,7 @@
         <span class="tile-value" id="tile-storage-val">0 workouts · local only</span>
       </button>
 
-      <p class="muted small version-line">v1.0 · 2026-05-11h · web MVP · <a href="#" id="about-link">about</a></p>
+      <p class="muted small version-line">v1.1 · 2026-05-11i · web MVP · <a href="#" id="about-link">about</a></p>
 
       <nav class="tabbar">
         <a href="#/home" class="tab">HOME</a>
@@ -824,6 +833,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="app.js?v=20260511h" type="module"></script>
+  <script src="app.js?v=20260511i" type="module"></script>
 </body>
 </html>

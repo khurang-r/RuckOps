@@ -2142,3 +2142,49 @@ select {
   0%, 100% { opacity: 0.7; }
   50%       { opacity: 1.0; }
 }
+
+/* Goal-behavior toggle row */
+.goal-behavior-row {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider, rgba(255,255,255,0.08));
+}
+.goal-behavior-row .muted.small {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  opacity: 0.7;
+}
+.goal-behavior-options {
+  display: flex;
+  gap: 8px;
+}
+.goal-behavior-opt {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--divider, rgba(255,255,255,0.12));
+  background: transparent;
+  color: var(--fg, #d8d4cc);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+.goal-behavior-opt:hover {
+  border-color: var(--olive, #4a5d23);
+}
+.goal-behavior-opt.selected {
+  background: var(--olive, #4a5d23);
+  border-color: var(--olive, #4a5d23);
+  color: #fff;
+}
+.muted.tiny {
+  font-size: 10.5px;
+  opacity: 0.55;
+  margin-top: 6px;
+  letter-spacing: 0.02em;
+}
