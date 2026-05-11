@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css?v=20260511b" />
+  <link rel="stylesheet" href="styles.css?v=20260511c" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet" />
 </head>
@@ -141,136 +141,225 @@
   </template>
 
   <template id="tpl-pre">
-    <main class="screen pre">
+    <main class="screen pre tile-screen">
       <header class="screen-header">
         <button class="back" data-route="#/home" aria-label="Back">←</button>
         <h2>NEW WORKOUT</h2>
       </header>
-      <div class="mode-toggle">
-        <button class="mode selected" data-mode="ruck">RUCK</button>
-        <button class="mode" data-mode="run">RUN</button>
+
+      <div class="tile-grid">
+        <button class="tile" data-sheet="mode">
+          <span class="tile-label">MODE</span>
+          <span class="tile-value" id="tile-mode-val">RUCK</span>
+        </button>
+        <button class="tile" data-sheet="pack" id="tile-pack">
+          <span class="tile-label">PACK</span>
+          <span class="tile-value" id="tile-pack-val">35 LBS</span>
+        </button>
       </div>
-      <section class="pack-section" id="pack-section">
-        <label class="muted">PACK WEIGHT</label>
-        <div class="stepper">
-          <button class="stepper-btn" id="pack-minus" aria-label="Decrease pack weight">−</button>
-          <div class="stepper-display">
-            <input type="number" min="0" max="200" id="pre-packweight" inputmode="decimal" />
-            <span class="suffix" data-unit="weight">LBS</span>
-          </div>
-          <button class="stepper-btn" id="pack-plus" aria-label="Increase pack weight">+</button>
-        </div>
-      </section>
-      <section class="pacing-section">
-        <label class="muted">PACING METHOD <span class="muted small">(OPTIONAL)</span></label>
 
-        <div class="muted small section-sublabel">PACE-DRIVEN</div>
-        <div class="pacing-options">
-          <button class="pacing-opt selected" data-pacing="off">
-            <span class="opt-label">OFF</span>
-            <span class="opt-sub">steady, no intervals</span>
-          </button>
-          <button class="pacing-opt" data-pacing="galloway">
-            <span class="opt-label">GALLOWAY RUN-WALK</span>
-            <span class="opt-sub">evidence-based · reduces injury risk ~50%</span>
-          </button>
-          <button class="pacing-opt" data-pacing="tactical">
-            <span class="opt-label">TACTICAL RUCK SHUFFLE</span>
-            <span class="opt-sub">military protocol · scales with pack weight</span>
-          </button>
-          <button class="pacing-opt" data-pacing="custom">
-            <span class="opt-label">CUSTOM</span>
-            <span class="opt-sub">set your own intervals</span>
-          </button>
-        </div>
+      <button class="tile tile-wide" data-sheet="pacing">
+        <span class="tile-label">PACING</span>
+        <span class="tile-value" id="tile-pacing-val">Off · steady</span>
+        <span class="tile-detail" id="tile-pacing-detail"></span>
+      </button>
 
-        <div class="muted small section-sublabel">EFFORT-DRIVEN <span class="muted">(structured workouts)</span></div>
-        <div class="pacing-options">
-          <button class="pacing-opt" data-pacing="norwegian">
-            <span class="opt-label">NORWEGIAN 4×4</span>
-            <span class="opt-sub">4×(4m work / 3m easy) · gold-standard VO₂ max protocol · 28 min</span>
-          </button>
-          <button class="pacing-opt" data-pacing="pyramid">
-            <span class="opt-label">PYRAMID 1-2-3-2-1</span>
-            <span class="opt-sub">ladder intervals · classic mid-distance work · 18 min</span>
-          </button>
-          <button class="pacing-opt" data-pacing="fartlek">
-            <span class="opt-label">FARTLEK</span>
-            <span class="opt-sub">random surges · Swedish &quot;speed play&quot; · continuous</span>
-          </button>
-        </div>
+      <button class="tile tile-wide" data-sheet="goal">
+        <span class="tile-label">GOAL</span>
+        <span class="tile-value" id="tile-goal-val">None</span>
+        <span class="tile-detail" id="tile-goal-detail"></span>
+      </button>
 
-        <!-- Target pace (visible when method != off) -->
-        <div class="pace-config hidden" id="pace-config">
-          <label class="muted small" id="pace-label">AVERAGE TARGET PACE</label>
-          <div class="stepper">
-            <button class="stepper-btn" id="pace-minus" aria-label="Slower">−</button>
-            <div class="stepper-display">
-              <span class="pace-value" id="pace-value">9:00</span>
-              <span class="suffix" data-unit="pace">/MI</span>
-            </div>
-            <button class="stepper-btn" id="pace-plus" aria-label="Faster">+</button>
-          </div>
-          <p class="pace-derived" id="pace-derived"></p>
-        </div>
+      <button class="tile tile-wide" data-sheet="coaching">
+        <span class="tile-label">COACHING</span>
+        <span class="tile-value" id="tile-coaching-val">Full voice · 10s anticip</span>
+      </button>
 
-        <!-- Custom run/walk steppers (visible when method == custom) -->
-        <div class="custom-config hidden" id="custom-config">
-          <div class="stepper-row">
-            <label class="muted small">RUN</label>
-            <div class="stepper">
-              <button class="stepper-btn small" id="run-minus" aria-label="Less run">−</button>
-              <div class="stepper-display small"><span id="run-val">4:00</span></div>
-              <button class="stepper-btn small" id="run-plus" aria-label="More run">+</button>
-            </div>
-          </div>
-          <div class="stepper-row">
-            <label class="muted small">WALK</label>
-            <div class="stepper">
-              <button class="stepper-btn small" id="walk-minus" aria-label="Less walk">−</button>
-              <div class="stepper-display small"><span id="walk-val">1:00</span></div>
-              <button class="stepper-btn small" id="walk-plus" aria-label="More walk">+</button>
-            </div>
-          </div>
-        </div>
+      <div class="gps-line">
+        <span class="gps-chip" id="gps-status">📡 SEARCHING</span>
+        <span class="injury-pill hidden" id="injury-pill"></span>
+      </div>
 
-        <!-- Injury warning slot -->
-        <p class="injury-warning hidden" id="injury-warning"></p>
-      </section>
-
-      <section class="goal-section">
-        <label class="muted">GOAL <span class="muted small">(OPTIONAL)</span></label>
-        <div class="goal-options">
-          <button class="goal-opt selected" data-goal="none">NONE</button>
-          <button class="goal-opt" data-goal="distance">DISTANCE</button>
-          <button class="goal-opt" data-goal="time">TIME</button>
-        </div>
-        <div class="goal-config hidden" id="goal-config">
-          <div class="stepper">
-            <button class="stepper-btn" id="goal-minus" aria-label="Decrease">−</button>
-            <div class="stepper-display">
-              <span class="goal-value" id="goal-value">3.0</span>
-              <span class="suffix" id="goal-suffix" data-unit="distance">MI</span>
-            </div>
-            <button class="stepper-btn" id="goal-plus" aria-label="Increase">+</button>
-          </div>
-          <p class="goal-eta" id="goal-eta"></p>
-          <div class="fuel-plan-preview hidden" id="fuel-plan-preview">
-            <div class="row"><span class="label">Hydration</span><span class="val" id="fuel-plan-water"></span></div>
-            <div class="row"><span class="label">Fuel</span><span class="val" id="fuel-plan-carbs"></span></div>
-            <p class="notes" id="fuel-plan-notes"></p>
-          </div>
-        </div>
-      </section>
-      <section class="gps-panel">
-        <span class="gps-icon">📡</span>
-        <span>GPS SIGNAL: </span>
-        <span class="gps-status" id="gps-status">SEARCHING</span>
-      </section>
       <button class="btn btn-primary big-cta" id="begin-tracking" disabled>START</button>
-      <p class="muted small foreground-note">
-        Workout records while this tab is open. Keep the screen on.
-      </p>
+
+      <!-- ========== HIDDEN STATE (controls live inside sheets) ========== -->
+      <!-- Mode sheet -->
+      <div class="sheet hidden" id="sheet-mode" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>MODE</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="mode-toggle">
+              <button class="mode selected" data-mode="ruck">RUCK</button>
+              <button class="mode" data-mode="run">RUN</button>
+            </div>
+            <p class="muted small mode-help">Ruck adds a pack weight stat and adjusts fuel/hydration cues. Run tracks pace only.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pack sheet -->
+      <div class="sheet hidden" id="sheet-pack" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>PACK WEIGHT</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="stepper">
+              <button class="stepper-btn" id="pack-minus" aria-label="Decrease pack weight">−</button>
+              <div class="stepper-display">
+                <input type="number" min="0" max="200" id="pre-packweight" inputmode="decimal" />
+                <span class="suffix" data-unit="weight">LBS</span>
+              </div>
+              <button class="stepper-btn" id="pack-plus" aria-label="Increase pack weight">+</button>
+            </div>
+            <p class="muted small">Steps of 5 lbs (or 2 kg). Reference: 35 lbs is the standard rucking weight; over 50 lbs is heavy; over 65 lbs the app recommends march-only.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pacing sheet -->
+      <div class="sheet hidden" id="sheet-pacing" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>PACING</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="muted small section-sublabel">PACE-DRIVEN</div>
+            <div class="pacing-options">
+              <button class="pacing-opt selected" data-pacing="off">
+                <span class="opt-label">OFF</span>
+                <span class="opt-sub">steady, no intervals</span>
+              </button>
+              <button class="pacing-opt" data-pacing="galloway">
+                <span class="opt-label">GALLOWAY RUN-WALK</span>
+                <span class="opt-sub">evidence-based · reduces injury risk ~50%</span>
+              </button>
+              <button class="pacing-opt" data-pacing="tactical">
+                <span class="opt-label">TACTICAL RUCK SHUFFLE</span>
+                <span class="opt-sub">military protocol · scales with pack weight</span>
+              </button>
+              <button class="pacing-opt" data-pacing="custom">
+                <span class="opt-label">CUSTOM</span>
+                <span class="opt-sub">set your own intervals</span>
+              </button>
+            </div>
+            <div class="muted small section-sublabel">EFFORT-DRIVEN <span class="muted">(structured workouts)</span></div>
+            <div class="pacing-options">
+              <button class="pacing-opt" data-pacing="norwegian">
+                <span class="opt-label">NORWEGIAN 4×4</span>
+                <span class="opt-sub">4×(4m work / 3m easy) · gold-standard VO₂ max · 28 min</span>
+              </button>
+              <button class="pacing-opt" data-pacing="pyramid">
+                <span class="opt-label">PYRAMID 1-2-3-2-1</span>
+                <span class="opt-sub">ladder intervals · 18 min</span>
+              </button>
+              <button class="pacing-opt" data-pacing="fartlek">
+                <span class="opt-label">FARTLEK</span>
+                <span class="opt-sub">random surges · &quot;speed play&quot; · continuous</span>
+              </button>
+            </div>
+            <div class="pace-config hidden" id="pace-config">
+              <label class="muted small" id="pace-label">AVERAGE TARGET PACE</label>
+              <div class="stepper">
+                <button class="stepper-btn" id="pace-minus" aria-label="Slower">−</button>
+                <div class="stepper-display">
+                  <span class="pace-value" id="pace-value">9:00</span>
+                  <span class="suffix" data-unit="pace">/MI</span>
+                </div>
+                <button class="stepper-btn" id="pace-plus" aria-label="Faster">+</button>
+              </div>
+              <p class="pace-derived" id="pace-derived"></p>
+            </div>
+            <div class="custom-config hidden" id="custom-config">
+              <div class="stepper-row">
+                <label class="muted small">RUN</label>
+                <div class="stepper">
+                  <button class="stepper-btn small" id="run-minus" aria-label="Less run">−</button>
+                  <div class="stepper-display small"><span id="run-val">4:00</span></div>
+                  <button class="stepper-btn small" id="run-plus" aria-label="More run">+</button>
+                </div>
+              </div>
+              <div class="stepper-row">
+                <label class="muted small">WALK</label>
+                <div class="stepper">
+                  <button class="stepper-btn small" id="walk-minus" aria-label="Less walk">−</button>
+                  <div class="stepper-display small"><span id="walk-val">1:00</span></div>
+                  <button class="stepper-btn small" id="walk-plus" aria-label="More walk">+</button>
+                </div>
+              </div>
+            </div>
+            <p class="injury-warning hidden" id="injury-warning"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Goal sheet -->
+      <div class="sheet hidden" id="sheet-goal" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>GOAL</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="goal-options">
+              <button class="goal-opt selected" data-goal="none">NONE</button>
+              <button class="goal-opt" data-goal="distance">DISTANCE</button>
+              <button class="goal-opt" data-goal="time">TIME</button>
+            </div>
+            <div class="goal-config hidden" id="goal-config">
+              <div class="stepper">
+                <button class="stepper-btn" id="goal-minus" aria-label="Decrease">−</button>
+                <div class="stepper-display">
+                  <span class="goal-value" id="goal-value">3.0</span>
+                  <span class="suffix" id="goal-suffix" data-unit="distance">MI</span>
+                </div>
+                <button class="stepper-btn" id="goal-plus" aria-label="Increase">+</button>
+              </div>
+              <p class="goal-eta" id="goal-eta"></p>
+              <div class="fuel-plan-preview hidden" id="fuel-plan-preview">
+                <div class="row"><span class="label">Hydration</span><span class="val" id="fuel-plan-water"></span></div>
+                <div class="row"><span class="label">Fuel</span><span class="val" id="fuel-plan-carbs"></span></div>
+                <p class="notes" id="fuel-plan-notes"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Coaching sheet -->
+      <div class="sheet hidden" id="sheet-coaching" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>COACHING</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="setting-row">
+              <span class="muted">VOICE CUES</span>
+              <select id="pre-set-voice">
+                <option value="off">OFF</option>
+                <option value="minimal">MINIMAL · phase changes only</option>
+                <option value="full">FULL · + mile/km splits + fuel</option>
+                <option value="verbose">VERBOSE · + pace updates every 2 min</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <span class="muted">SOUND EFFECTS</span>
+              <label class="toggle"><input type="checkbox" id="pre-set-sounds" /><span></span></label>
+            </div>
+            <div class="setting-row">
+              <span class="muted">ANTICIPATION</span>
+              <select id="pre-set-anticipation">
+                <option value="0">OFF</option>
+                <option value="5">5 sec warning</option>
+                <option value="10">10 sec warning</option>
+                <option value="15">15 sec warning</option>
+              </select>
+            </div>
+            <p class="muted small">These settings save and apply to all future workouts.</p>
+          </div>
+        </div>
+      </div>
     </main>
   </template>
 
@@ -386,78 +475,170 @@
   </template>
 
   <template id="tpl-profile">
-    <main class="screen profile">
+    <main class="screen profile tile-screen">
       <header class="screen-header"><h2>PROFILE</h2></header>
-      <section class="panel">
-        <h3 class="panel-title">SETTINGS</h3>
-        <div class="setting-row">
-          <span class="muted">UNITS</span>
-          <select id="set-units">
-            <option value="imperial">MI · LBS</option>
-            <option value="metric">KM · KG</option>
-          </select>
-        </div>
-        <div class="setting-row">
-          <span class="muted">DEFAULT PACK</span>
-          <div class="num-input small">
-            <input type="number" min="0" max="200" id="set-packweight" inputmode="decimal" />
-            <span class="suffix" data-unit="weight">LBS</span>
-          </div>
-        </div>
-        <div class="setting-row">
-          <span class="muted">BODY WEIGHT</span>
-          <div class="num-input small">
-            <input type="number" min="0" max="500" id="set-bodyweight" inputmode="decimal" />
-            <span class="suffix" data-unit="weight">LBS</span>
-          </div>
-        </div>
-        <div class="setting-row">
-          <span class="muted">AUTO-PAUSE</span>
-          <label class="toggle"><input type="checkbox" id="set-autopause" /><span></span></label>
-        </div>
-      </section>
-      <section class="panel">
-        <h3 class="panel-title">COACHING</h3>
-        <div class="setting-row">
-          <span class="muted">VOICE CUES</span>
-          <select id="set-voice">
-            <option value="off">OFF</option>
-            <option value="minimal">MINIMAL · phase changes only</option>
-            <option value="full">FULL · + mile/km splits + fuel</option>
-            <option value="verbose">VERBOSE · + pace updates every 2 min</option>
-          </select>
-        </div>
-        <div class="setting-row">
-          <span class="muted">SOUND EFFECTS</span>
-          <label class="toggle"><input type="checkbox" id="set-sounds" /><span></span></label>
-        </div>
-        <div class="setting-row">
-          <span class="muted">ANTICIPATION</span>
-          <select id="set-anticipation">
-            <option value="0">OFF</option>
-            <option value="5">5 sec warning</option>
-            <option value="10">10 sec warning</option>
-            <option value="15">15 sec warning</option>
-          </select>
-        </div>
-      </section>
-      <section class="panel">
-        <h3 class="panel-title">DATA</h3>
-        <button class="btn btn-outline" id="export-csv">EXPORT CSV</button>
-        <button class="btn btn-outline" id="force-update">FORCE UPDATE</button>
-        <button class="btn btn-text danger" id="reset-app">RESET ALL DATA</button>
-      </section>
-      <p class="muted small">v0.4 · 2026-05-11b · web MVP · <a href="#" id="about-link">about</a></p>
+
+      <div class="tile-grid">
+        <button class="tile" data-sheet="p-units">
+          <span class="tile-label">UNITS</span>
+          <span class="tile-value" id="tile-units-val">MI · LBS</span>
+        </button>
+        <button class="tile" data-sheet="p-body">
+          <span class="tile-label">BODY</span>
+          <span class="tile-value" id="tile-body-val">145 LBS</span>
+        </button>
+        <button class="tile" data-sheet="p-pack">
+          <span class="tile-label">DEFAULT PACK</span>
+          <span class="tile-value" id="tile-defpack-val">30 LBS</span>
+        </button>
+        <button class="tile" data-sheet="p-autopause">
+          <span class="tile-label">AUTO-PAUSE</span>
+          <span class="tile-value" id="tile-autopause-val">ON</span>
+        </button>
+      </div>
+
+      <button class="tile tile-wide" data-sheet="p-coaching">
+        <span class="tile-label">COACHING</span>
+        <span class="tile-value" id="tile-coaching2-val">Full voice · 10s anticip</span>
+      </button>
+
+      <button class="tile tile-wide" data-sheet="p-storage">
+        <span class="tile-label">DATA & BACKUP</span>
+        <span class="tile-value" id="tile-storage-val">0 workouts · local only</span>
+      </button>
+
+      <p class="muted small version-line">v0.5 · 2026-05-11c · web MVP · <a href="#" id="about-link">about</a></p>
+
       <nav class="tabbar">
         <a href="#/home" class="tab">HOME</a>
         <a href="#/history" class="tab">HISTORY</a>
         <a href="#/profile" class="tab active">PROFILE</a>
       </nav>
+
+      <!-- Profile sheets -->
+      <div class="sheet hidden" id="sheet-p-units">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>UNITS</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="setting-row">
+              <span class="muted">MEASUREMENT SYSTEM</span>
+              <select id="set-units">
+                <option value="imperial">MI · LBS</option>
+                <option value="metric">KM · KG</option>
+              </select>
+            </div>
+            <p class="muted small">Distance, weight, pace — all display in your chosen system.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet hidden" id="sheet-p-body">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>BODY WEIGHT</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="num-input small">
+              <input type="number" min="0" max="500" id="set-bodyweight" inputmode="decimal" />
+              <span class="suffix" data-unit="weight">LBS</span>
+            </div>
+            <p class="muted small">Used to flag high pack:body ratios. Never shared.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet hidden" id="sheet-p-pack">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>DEFAULT PACK</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="num-input small">
+              <input type="number" min="0" max="200" id="set-packweight" inputmode="decimal" />
+              <span class="suffix" data-unit="weight">LBS</span>
+            </div>
+            <p class="muted small">Pre-fills the pack weight on new workouts. Per-workout edits don't change this.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet hidden" id="sheet-p-autopause">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>AUTO-PAUSE</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="setting-row">
+              <span class="muted">ENABLED</span>
+              <label class="toggle"><input type="checkbox" id="set-autopause" /><span></span></label>
+            </div>
+            <p class="muted small">Pauses the workout after 15 seconds of stillness. Resumes on movement.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet hidden" id="sheet-p-coaching">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>COACHING</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="setting-row">
+              <span class="muted">VOICE CUES</span>
+              <select id="set-voice">
+                <option value="off">OFF</option>
+                <option value="minimal">MINIMAL · phase changes only</option>
+                <option value="full">FULL · + splits + fuel</option>
+                <option value="verbose">VERBOSE · + pace updates every 2 min</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <span class="muted">SOUND EFFECTS</span>
+              <label class="toggle"><input type="checkbox" id="set-sounds" /><span></span></label>
+            </div>
+            <div class="setting-row">
+              <span class="muted">ANTICIPATION</span>
+              <select id="set-anticipation">
+                <option value="0">OFF</option>
+                <option value="5">5 sec warning</option>
+                <option value="10">10 sec warning</option>
+                <option value="15">15 sec warning</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sheet hidden" id="sheet-p-storage">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>DATA & BACKUP</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="storage-stats" id="storage-stats">
+              <div class="row"><span class="label">Workouts</span><span class="val" id="storage-count">0</span></div>
+              <div class="row"><span class="label">Local storage</span><span class="val" id="storage-size">—</span></div>
+              <div class="row"><span class="label">Persistence</span><span class="val" id="storage-persist">Unknown</span></div>
+            </div>
+            <button class="btn btn-outline" id="request-persist">REQUEST PERSISTENT STORAGE</button>
+            <button class="btn btn-outline" id="backup-json">BACKUP (JSON)</button>
+            <button class="btn btn-outline" id="restore-json">RESTORE (JSON)</button>
+            <input type="file" id="restore-file" accept="application/json,.json" style="display:none" />
+            <button class="btn btn-outline" id="export-csv">EXPORT CSV</button>
+            <button class="btn btn-outline" id="force-update">FORCE UPDATE</button>
+            <button class="btn btn-text danger" id="reset-app">RESET ALL DATA</button>
+            <p class="muted small">Workouts are stored in your browser's localStorage. Request persistent storage to make the browser less likely to evict it under disk pressure. Use backup/restore to move data between devices.</p>
+          </div>
+        </div>
+      </div>
     </main>
+  </template>
   </template>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="app.js?v=20260511b" type="module"></script>
+  <script src="app.js?v=20260511c" type="module"></script>
 </body>
 </html>

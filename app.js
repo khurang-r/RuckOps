@@ -148,6 +148,62 @@ function toast(msg, kind = 'info') {
 // Replaces native confirm() with a styled, accessible overlay.
 // Returns Promise<boolean>: true on confirm, false on cancel.
 
+// -- Bottom sheets ------------------------------------------------------
+// Sheets are pre-built inside each screen template. openSheet just shows
+// the matching element + wires the close handlers; closing restores focus.
+
+function openSheet(sheetId) {
+  const el = document.getElementById('sheet-' + sheetId);
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.setAttribute('aria-hidden', 'false');
+  // Wire close — once per open
+  const close = () => closeSheet(sheetId);
+  el.querySelector('.sheet-close').addEventListener('click', close, { once: true });
+  el.querySelector('.sheet-backdrop').addEventListener('click', close, { once: true });
+  // Esc to close
+  const onKey = (e) => { if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(); } };
+  document.addEventListener('keydown', onKey);
+  // Touch swipe-down to dismiss
+  const card = el.querySelector('.sheet-card');
+  let startY = null;
+  const onStart = (e) => { startY = e.touches[0].clientY; };
+  const onMove = (e) => {
+    if (startY == null) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0) card.style.transform = `translateY(${dy}px)`;
+  };
+  const onEnd = (e) => {
+    if (startY == null) return;
+    const dy = (e.changedTouches[0].clientY - startY);
+    card.style.transform = '';
+    startY = null;
+    if (dy > 100) close();
+  };
+  card.addEventListener('touchstart', onStart, { passive: true });
+  card.addEventListener('touchmove', onMove, { passive: true });
+  card.addEventListener('touchend', onEnd, { passive: true });
+  // Brief haptic on open
+  if (navigator.vibrate) navigator.vibrate(8);
+}
+
+function closeSheet(sheetId) {
+  const el = document.getElementById('sheet-' + sheetId);
+  if (!el) return;
+  el.classList.add('hidden');
+  el.setAttribute('aria-hidden', 'true');
+}
+
+// Wire tile clicks within a given root node — called after each template mount.
+function wireTiles(root) {
+  root.querySelectorAll('.tile[data-sheet]').forEach(t => {
+    t.addEventListener('click', (e) => {
+      e.preventDefault();
+      openSheet(t.dataset.sheet);
+    });
+  });
+}
+
 function showConfirm({ title = 'Confirm', message = '', confirmLabel = 'OK', cancelLabel = 'CANCEL', danger = false } = {}) {
   return new Promise((resolve) => {
     const root = document.getElementById('confirm-modal');
@@ -1587,15 +1643,19 @@ function renderPre(root) {
   // Back nav
   node.querySelector('.back').addEventListener('click', () => navigate('#/home'));
 
-  // Mode toggle
+  // Wire all tile-click → openSheet handlers
+  wireTiles(node);
+
+  // Mode toggle (now inside the mode sheet)
   let mode = 'ruck';
-  const packSection = node.querySelector('#pack-section');
+  const packTile = node.querySelector('#tile-pack');
   node.querySelectorAll('.mode').forEach(b => {
     b.addEventListener('click', () => {
       node.querySelectorAll('.mode').forEach(x => x.classList.remove('selected'));
       b.classList.add('selected');
       mode = b.dataset.mode;
-      packSection.style.display = mode === 'ruck' ? '' : 'none';
+      if (packTile) packTile.style.display = mode === 'ruck' ? '' : 'none';
+      renderTileSummaries();
     });
   });
 
@@ -1767,6 +1827,7 @@ function renderPre(root) {
     }
 
     renderGoal();
+    renderTileSummaries();
   }
 
   function renderGoal() {
@@ -1821,6 +1882,106 @@ function renderPre(root) {
       notesEl.classList.remove('hidden');
     } else {
       notesEl.textContent = '';
+    }
+    renderTileSummaries();
+  }
+
+  function renderTileSummaries() {
+    // MODE tile
+    const tMode = node.querySelector('#tile-mode-val');
+    if (tMode) tMode.textContent = mode === 'ruck' ? 'RUCK' : 'RUN';
+
+    // PACK tile
+    const tPack = node.querySelector('#tile-pack-val');
+    if (tPack) {
+      const v = parseFloat(packInput.value) || 0;
+      tPack.textContent = v + ' ' + (settings.units === 'metric' ? 'KG' : 'LBS');
+    }
+
+    // PACING tile
+    const tPacing = node.querySelector('#tile-pacing-val');
+    const tPacingD = node.querySelector('#tile-pacing-detail');
+    const pacingTile = node.querySelector('.tile[data-sheet="pacing"]');
+    if (tPacing && tPacingD) {
+      if (method === 'off') {
+        tPacing.textContent = 'Off · steady';
+        tPacingD.textContent = '';
+      } else {
+        const methodNames = {
+          galloway: 'Galloway',
+          tactical: 'Tactical',
+          custom: 'Custom',
+          norwegian: 'Norwegian 4×4',
+          pyramid: 'Pyramid 1-2-3-2-1',
+          fartlek: 'Fartlek'
+        };
+        const targets = getPhaseTargets();
+        if (isEffortMode(method)) {
+          tPacing.textContent = methodNames[method];
+          if (targets && targets.runPaceSecPerMi) {
+            tPacingD.textContent = 'Work @ ' + formatPaceSecPerMi(targets.runPaceSecPerMi);
+          }
+        } else {
+          tPacing.textContent = methodNames[method] + ' · ' + formatMinSec(paceSecPerUnit) + ' avg';
+          if (targets && targets.runPaceSecPerMi && targets.walkPaceSecPerMi) {
+            tPacingD.textContent = 'Run ' + formatPaceSecPerMi(targets.runPaceSecPerMi) +
+                                   ' · Walk ' + formatPaceSecPerMi(targets.walkPaceSecPerMi);
+          } else {
+            tPacingD.textContent = '';
+          }
+        }
+      }
+      // Injury warning ports to the tile + a pill below
+      const paceSecPerMi = settings.units === 'metric' ? paceSecPerUnit * 1.609344 : paceSecPerUnit;
+      const warn = injuryRiskWarning(method, paceSecPerMi, getCurrentPackLbs());
+      const injuryPill = node.querySelector('#injury-pill');
+      if (pacingTile) {
+        pacingTile.classList.remove('warn', 'danger');
+        if (warn) pacingTile.classList.add(warn.level === 'danger' ? 'danger' : 'warn');
+      }
+      if (injuryPill) {
+        if (warn) {
+          injuryPill.classList.remove('hidden');
+          injuryPill.classList.toggle('danger', warn.level === 'danger');
+          injuryPill.textContent = warn.level === 'danger' ? '⚠ HIGH INJURY RISK' : '⚠ CAUTION';
+        } else {
+          injuryPill.classList.add('hidden');
+        }
+      }
+    }
+
+    // GOAL tile
+    const tGoal = node.querySelector('#tile-goal-val');
+    const tGoalD = node.querySelector('#tile-goal-detail');
+    if (tGoal && tGoalD) {
+      if (goalType === 'none') {
+        tGoal.textContent = 'None';
+        tGoalD.textContent = '';
+      } else if (goalType === 'distance') {
+        const inUnit = settings.units === 'metric' ? goalDistM / 1000 : goalDistM / 1609.344;
+        tGoal.textContent = inUnit.toFixed(1) + ' ' + unitLabel();
+        const ms = estimateGoalCompletionMs();
+        if (ms) tGoalD.textContent = 'ETA ' + formatMinSec(ms / 1000);
+        else tGoalD.textContent = '';
+      } else if (goalType === 'time') {
+        tGoal.textContent = Math.round(goalTimeSec / 60) + ' min';
+        const m = estimateGoalDistanceM();
+        if (m) {
+          const inUnit = settings.units === 'metric' ? m / 1000 : m / 1609.344;
+          tGoalD.textContent = 'Expected: ' + inUnit.toFixed(2) + ' ' + unitLabel().toLowerCase();
+        } else {
+          tGoalD.textContent = '';
+        }
+      }
+    }
+
+    // COACHING tile
+    const tCoach = node.querySelector('#tile-coaching-val');
+    if (tCoach) {
+      const v = settings.voiceCues || 'full';
+      const ant = settings.anticipationSec != null ? settings.anticipationSec : 10;
+      const voiceLabels = { off: 'No voice', minimal: 'Minimal voice', full: 'Full voice', verbose: 'Verbose voice' };
+      tCoach.textContent = voiceLabels[v] + ' · ' + (ant === 0 ? 'no warning' : ant + 's warning');
     }
   }
 
@@ -1961,6 +2122,30 @@ function renderPre(root) {
   });
 
   renderConfigurator();
+
+  // Wire coaching sheet — live-saves to settings so the pre-flight summary
+  // updates as the user changes voice/sound/anticipation.
+  const preVoice = node.querySelector('#pre-set-voice');
+  const preSounds = node.querySelector('#pre-set-sounds');
+  const preAnt = node.querySelector('#pre-set-anticipation');
+  if (preVoice && preSounds && preAnt) {
+    preVoice.value = settings.voiceCues || 'full';
+    preSounds.checked = settings.soundEffects !== false;
+    preAnt.value = String(settings.anticipationSec != null ? settings.anticipationSec : 10);
+    const saveCoaching = () => {
+      saveSettings({
+        ...settings,
+        voiceCues: preVoice.value,
+        soundEffects: preSounds.checked,
+        anticipationSec: parseInt(preAnt.value, 10) || 0
+      });
+      Object.assign(settings, loadSettings());
+      renderTileSummaries();
+    };
+    preVoice.addEventListener('change', saveCoaching);
+    preSounds.addEventListener('change', saveCoaching);
+    preAnt.addEventListener('change', saveCoaching);
+  }
 
   // GPS probe loop. simple watch.
   const gpsStatus = node.querySelector('#gps-status');
@@ -2577,6 +2762,7 @@ function renderProfile(root) {
   const node = mountTemplate(root, 'tpl-profile');
   const settings = loadSettings();
   applyUnits(node, settings.units);
+  wireTiles(node);
 
   const unitsSel = node.querySelector('#set-units');
   const packIn = node.querySelector('#set-packweight');
@@ -2599,6 +2785,43 @@ function renderProfile(root) {
   soundsToggle.checked = settings.soundEffects !== false;
   antSel.value = String(settings.anticipationSec != null ? settings.anticipationSec : 10);
 
+  function renderProfileTiles() {
+    const cur = loadSettings();
+    const unitsT = node.querySelector('#tile-units-val');
+    if (unitsT) unitsT.textContent = cur.units === 'metric' ? 'KM · KG' : 'MI · LBS';
+    const bodyT = node.querySelector('#tile-body-val');
+    if (bodyT) {
+      if (cur.bodyWeight) {
+        const v = Math.round(Units.fromWeightInternal(cur.bodyWeight, cur.units));
+        bodyT.textContent = v + ' ' + (cur.units === 'metric' ? 'KG' : 'LBS');
+      } else {
+        bodyT.textContent = 'Not set';
+      }
+    }
+    const defPackT = node.querySelector('#tile-defpack-val');
+    if (defPackT) {
+      const v = Math.round(Units.fromWeightInternal(
+        Units.toWeightInternal(cur.defaultPackWeight, cur.units), cur.units
+      ));
+      defPackT.textContent = cur.defaultPackWeight + ' ' + (cur.units === 'metric' ? 'KG' : 'LBS');
+    }
+    const apT = node.querySelector('#tile-autopause-val');
+    if (apT) apT.textContent = cur.autoPause ? 'ON' : 'OFF';
+    const coachT = node.querySelector('#tile-coaching2-val');
+    if (coachT) {
+      const v = cur.voiceCues || 'full';
+      const ant = cur.anticipationSec != null ? cur.anticipationSec : 10;
+      const labels = { off: 'No voice', minimal: 'Minimal voice', full: 'Full voice', verbose: 'Verbose voice' };
+      coachT.textContent = labels[v] + ' · ' + (ant === 0 ? 'no warning' : ant + 's warning');
+    }
+    const storT = node.querySelector('#tile-storage-val');
+    if (storT) {
+      const count = Workouts.list().length;
+      storT.textContent = count + ' workout' + (count === 1 ? '' : 's') + ' · local only';
+    }
+  }
+  renderProfileTiles();
+
   function persist() {
     const u = unitsSel.value;
     const pack = parseFloat(packIn.value) || 0;
@@ -2615,13 +2838,128 @@ function renderProfile(root) {
     applyUnits(node, u);
   }
 
-  unitsSel.addEventListener('change', () => { persist(); toast('Units updated', 'success'); });
-  packIn.addEventListener('change', () => { persist(); toast('Pack weight saved', 'success'); });
-  bwIn.addEventListener('change', () => { persist(); toast('Body weight saved', 'success'); });
-  apToggle.addEventListener('change', () => { persist(); toast('Auto-pause ' + (apToggle.checked ? 'on' : 'off'), 'success'); });
-  voiceSel.addEventListener('change', () => { persist(); toast('Voice cues: ' + voiceSel.value, 'success'); });
-  soundsToggle.addEventListener('change', () => { persist(); toast('Sound effects ' + (soundsToggle.checked ? 'on' : 'off'), 'success'); });
-  antSel.addEventListener('change', () => { persist(); toast('Anticipation: ' + (antSel.value === '0' ? 'off' : antSel.value + 's'), 'success'); });
+  unitsSel.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Units updated', 'success'); });
+  packIn.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Pack weight saved', 'success'); });
+  bwIn.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Body weight saved', 'success'); });
+  apToggle.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Auto-pause ' + (apToggle.checked ? 'on' : 'off'), 'success'); });
+  voiceSel.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Voice cues: ' + voiceSel.value, 'success'); });
+  soundsToggle.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Sound effects ' + (soundsToggle.checked ? 'on' : 'off'), 'success'); });
+  antSel.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Anticipation: ' + (antSel.value === '0' ? 'off' : antSel.value + 's'), 'success'); });
+
+  // ===== STORAGE & BACKUP =====
+  // Populate storage stats panel.
+  async function refreshStorageStats() {
+    const list = Workouts.list();
+    const cntEl = node.querySelector('#storage-count');
+    const sizeEl = node.querySelector('#storage-size');
+    const persistEl = node.querySelector('#storage-persist');
+    if (cntEl) cntEl.textContent = String(list.length);
+    if (sizeEl) {
+      try {
+        let total = 0;
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('ruckops.')) {
+            total += (localStorage.getItem(k) || '').length;
+          }
+        }
+        const kb = (total / 1024).toFixed(1);
+        sizeEl.textContent = kb + ' KB';
+      } catch { sizeEl.textContent = '—'; }
+    }
+    if (persistEl) {
+      try {
+        if (navigator.storage && navigator.storage.persisted) {
+          const p = await navigator.storage.persisted();
+          persistEl.textContent = p ? 'GRANTED — survives eviction' : 'NOT GRANTED — request below';
+          persistEl.style.color = p ? 'var(--olive)' : 'var(--muted)';
+        } else {
+          persistEl.textContent = 'Unsupported on this browser';
+        }
+      } catch { persistEl.textContent = 'Unknown'; }
+    }
+  }
+  refreshStorageStats();
+
+  // Wire storage sheet → request persistence
+  const reqPersist = node.querySelector('#request-persist');
+  if (reqPersist) {
+    reqPersist.addEventListener('click', async () => {
+      if (!navigator.storage || !navigator.storage.persist) {
+        toast('Not supported on this browser', 'danger');
+        return;
+      }
+      try {
+        const granted = await navigator.storage.persist();
+        if (granted) {
+          toast('Persistent storage granted', 'success');
+        } else {
+          toast('Browser declined — your data is still stored, just may be evicted under low disk', 'danger');
+        }
+        refreshStorageStats();
+      } catch {
+        toast('Request failed', 'danger');
+      }
+    });
+  }
+
+  // Backup → download JSON of everything
+  node.querySelector('#backup-json').addEventListener('click', () => {
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      app: 'RuckOps web MVP',
+      settings: loadSettings(),
+      workouts: Workouts.list(),
+      onboarded: Storage.get(ONBOARD_KEY, false)
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ruckops-backup-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Backup downloaded', 'success');
+  });
+
+  // Restore → pick a JSON file, merge into local storage
+  const restoreInput = node.querySelector('#restore-file');
+  node.querySelector('#restore-json').addEventListener('click', () => restoreInput.click());
+  restoreInput.addEventListener('change', async () => {
+    if (!restoreInput.files || restoreInput.files.length === 0) return;
+    const file = restoreInput.files[0];
+    try {
+      const txt = await file.text();
+      const data = JSON.parse(txt);
+      if (!data || !Array.isArray(data.workouts)) {
+        toast('Not a valid RuckOps backup', 'danger');
+        return;
+      }
+      const ok = await showConfirm({
+        title: 'Restore from backup?',
+        message: `This will merge ${data.workouts.length} workout${data.workouts.length === 1 ? '' : 's'} into your local data. Existing workouts with the same id will be overwritten. Settings will also be replaced.`,
+        confirmLabel: 'RESTORE',
+        cancelLabel: 'CANCEL'
+      });
+      if (!ok) return;
+      // Merge workouts (dedupe by id)
+      const existing = Workouts.list();
+      const byId = new Map(existing.map(w => [w.id, w]));
+      for (const w of data.workouts) byId.set(w.id, w);
+      Storage.set(WORKOUTS_KEY, [...byId.values()]);
+      if (data.settings) Storage.set(SETTINGS_KEY, data.settings);
+      if (data.onboarded != null) Storage.set(ONBOARD_KEY, !!data.onboarded);
+      toast('Restored ' + data.workouts.length + ' workout(s)', 'success');
+      refreshStorageStats();
+      renderProfileTiles();
+    } catch (e) {
+      console.error(e);
+      toast('Restore failed: ' + (e.message || 'invalid file'), 'danger');
+    } finally {
+      restoreInput.value = '';
+    }
+  });
 
   node.querySelector('#export-csv').addEventListener('click', () => {
     const all = Workouts.list();
@@ -2747,5 +3085,12 @@ window.addEventListener('DOMContentLoaded', () => {
     location.hash = Storage.get(ONBOARD_KEY, false) ? '#/home' : '#/welcome';
   } else {
     handleRoute();
+  }
+  // Silently request persistent storage on first load. Browsers usually
+  // grant this if the site has been visited a few times or installed as a
+  // PWA. Worst case it returns false and our data is still saved in
+  // localStorage (just may be evicted under disk pressure).
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
   }
 });
