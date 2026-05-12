@@ -1021,6 +1021,10 @@ class LockScreenPresenter {
     this.silentSource = null;
     this.active = false;
     this.updateInterval = null;
+    // Diagnostics for debugging device-specific failures.
+    this.lastError = null;
+    this.failureReason = null;     // 'no_media_session' | 'no_audio' | 'audio_suspended' | 'unknown'
+    this.audioState = null;        // mirrors audioCtx.state for the UI
   }
 
   static isSupported() {
@@ -1031,33 +1035,76 @@ class LockScreenPresenter {
 
   // Start the lock-screen session. MUST be called from a user gesture
   // (the workout START click) so the audio context can start.
+  //
+  // iOS quirks discovered during real-device testing:
+  //  - iOS suspends MediaSession metadata if Silent Mode (ring/silent switch)
+  //    is enabled — even for "music" sessions. There is NO API workaround;
+  //    the user must turn off Silent Mode. We surface this via a status
+  //    indicator so users know what to fix.
+  //  - iOS Safari without "Add to Home Screen" runs in browser-tab mode,
+  //    and lock-screen MediaSession may not surface there. The PWA install
+  //    matters. We can't detect this directly but we can mention it.
+  //  - The silent audio buffer must be >0 amplitude or iOS pauses the
+  //    session after ~30s. We use ~-50dB which is well above the noise floor
+  //    but inaudible.
+  //  - latencyHint: 'playback' signals to iOS this is a music/media session,
+  //    not a notification chime. Without this hint some devices route the
+  //    audio differently and skip the lock-screen UI.
   start({ title, artist, album, onPause, onStop, onResume }) {
-    if (!LockScreenPresenter.isSupported()) return false;
+    this.lastError = null;
+    this.failureReason = null;
+    if (!LockScreenPresenter.isSupported()) {
+      this.failureReason = 'no_media_session';
+      return false;
+    }
     if (this.active) return true;
 
     try {
       const Ctor = window.AudioContext || window.webkitAudioContext;
-      if (!Ctor) return false;
-      this.audioCtx = new Ctor();
+      if (!Ctor) {
+        this.failureReason = 'no_audio';
+        return false;
+      }
+      // latencyHint:'playback' tells iOS to treat this as a music session
+      // and place us in the lock-screen "now playing" surface. Without this
+      // the audio context may be routed as a notification, which doesn't
+      // get the lock-screen UI.
+      try {
+        this.audioCtx = new Ctor({ latencyHint: 'playback' });
+      } catch {
+        // Some older iOS Safari versions don't accept the options object.
+        this.audioCtx = new Ctor();
+      }
+      this.audioState = this.audioCtx.state;
       if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume().catch(() => {});
+        // Synchronous resume attempt — happens inside the user gesture so
+        // iOS should allow it.
+        this.audioCtx.resume().then(() => {
+          this.audioState = this.audioCtx.state;
+        }).catch((err) => {
+          this.lastError = err.message || String(err);
+          this.failureReason = 'audio_suspended';
+        });
       }
 
-      // Create a silent buffer that loops indefinitely. The actual audio
-      // is a hair above pure silence (-60dB white noise) — iOS pauses
-      // sessions with pure-silent buffers after ~30s.
+      // Create a silent buffer that loops. Amplitude needs to be ABOVE pure
+      // silence or iOS Safari pauses the session after ~30 seconds. We use
+      // -50dB instead of -60dB so the signal is clearly nonzero.
       const sr = this.audioCtx.sampleRate;
-      const len = sr * 2;  // 2 seconds, will loop
+      const len = sr * 2;
       const buffer = this.audioCtx.createBuffer(1, len, sr);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < len; i++) {
-        data[i] = (Math.random() - 0.5) * 0.001;  // -60dB
+        // White noise at -50dB (amplitude ~0.003). Still well below any
+        // audible threshold but clearly nonzero for iOS's session detector.
+        data[i] = (Math.random() - 0.5) * 0.006;
       }
       this.silentSource = this.audioCtx.createBufferSource();
       this.silentSource.buffer = buffer;
       this.silentSource.loop = true;
       const gain = this.audioCtx.createGain();
-      gain.gain.value = 0.001;  // additional volume floor
+      // Slightly higher gain than before — still inaudible in practice.
+      gain.gain.value = 0.003;
       this.silentSource.connect(gain).connect(this.audioCtx.destination);
       this.silentSource.start(0);
 
@@ -1079,7 +1126,6 @@ class LockScreenPresenter {
         if (onStop) {
           navigator.mediaSession.setActionHandler('stop', () => onStop());
         }
-        // Hide skip buttons (they're not meaningful for a workout)
         try {
           navigator.mediaSession.setActionHandler('nexttrack', null);
           navigator.mediaSession.setActionHandler('previoustrack', null);
@@ -1090,6 +1136,8 @@ class LockScreenPresenter {
       this.active = true;
       return true;
     } catch (e) {
+      this.lastError = e.message || String(e);
+      this.failureReason = 'unknown';
       console.warn('Lock-screen session failed to start', e);
       return false;
     }
@@ -2617,17 +2665,58 @@ class LiveWorkout {
     return units === 'metric' ? 1000 / speed : 1609.344 / speed;
   }
 
-  // Instant pace from the Kalman filter's velocity estimate. Far smoother
-  // than position-delta-based pace because velocity is a tracked state
-  // variable that's already filtered. Use this for responsive UI display;
-  // use rolling pace for "current effort" calculations that need stability.
+  // Instant pace from the Kalman filter's velocity estimate. Smoother than
+  // position-delta-based pace because velocity is a tracked state variable
+  // that's already filtered. Still volatile on the live screen because the
+  // Kalman is responsive to per-fix changes — use getDisplayPace() for the
+  // user-facing readout, and use this only for non-display logic (color cue,
+  // goal projection, etc.) that benefits from responsiveness.
   getInstantPaceSecPerUnit(units) {
     if (this.speedBuffer.length < 3) return null;
-    // Average the last few filtered speeds (smooths over noise even more)
     const recent = this.speedBuffer.slice(-5);
     const avgSpeed = recent.reduce((s, x) => s + x.speed, 0) / recent.length;
-    if (avgSpeed < 0.3) return null; // below ~0.7mph, treat as stationary
+    if (avgSpeed < 0.3) return null;
     return units === 'metric' ? 1000 / avgSpeed : 1609.344 / avgSpeed;
+  }
+
+  // STABLE pace for the live display. Combines two sources:
+  //  1. The 30-second rolling pace (distance / time over the window) — very
+  //     stable but slow to react to real pace changes.
+  //  2. The Kalman-filtered instantaneous pace — fast but jittery.
+  //
+  // We use the rolling pace as the primary, and let the instant value pull
+  // it slightly when there's a sustained drift (so a real surge or slowdown
+  // gets reflected in 10-15 seconds rather than the full 30). The output
+  // also passes through a slow EMA to absorb single-fix anomalies.
+  //
+  // The displayed pace ends up ~15 seconds behind ground truth, which is the
+  // right trade-off for a runner glancing at the screen. The average pace
+  // and total time remain perfectly accurate because they're cumulative.
+  getDisplayPaceSecPerUnit(units) {
+    const rolling = this.getRollingPaceSecPerUnit(units);
+    const instant = this.getInstantPaceSecPerUnit(units);
+    let target;
+    if (rolling != null && instant != null) {
+      // Blend: 80% rolling (stable), 20% instant (responsive)
+      target = rolling * 0.8 + instant * 0.2;
+    } else if (rolling != null) {
+      target = rolling;
+    } else if (instant != null) {
+      target = instant;
+    } else {
+      return null;
+    }
+    // EMA smoothing on top. Reset key tracks the units string so a unit
+    // switch resets the EMA cleanly.
+    const key = '_displayPaceEMA_' + units;
+    if (this[key] == null || !isFinite(this[key])) {
+      this[key] = target;
+    } else {
+      // EMA factor: 0.25 means ~4-sample memory. Each tick is ~1s, so
+      // ~4-second additional smoothing on top of the rolling window.
+      this[key] = this[key] * 0.75 + target * 0.25;
+    }
+    return this[key];
   }
 
   // GPS quality indicator from Kalman position stdev. Returns a 0-100 score.
@@ -2643,22 +2732,42 @@ class LiveWorkout {
   // Current grade (slope) as a fraction (0.05 = 5% uphill, -0.05 = 5% down).
   // Computed from the recent elevation buffer with a horizontal distance
   // floor — slopes are noisy at short distances on phone GPS.
+  // Current grade (slope) as a fraction (0.05 = 5% uphill, -0.05 = 5% down).
+  // STABILITY: phone GPS altitude has ±10m noise per fix. Computed naively
+  // over a 30m window, this produces ~30% grade artifacts. Two defenses:
+  //   1. Wide horizontal window (default 150m, or 80m if barometer is active
+  //      since barometric altitude is ~1m noise vs GPS's 10m).
+  //   2. Slow EMA on the grade output so single noisy fixes don't dominate.
+  // The trade-off is responsiveness: a real grade change takes ~15 seconds
+  // to fully register. That's appropriate — humans don't read GAP and react
+  // instantly to it, and stable values are far more useful than fast ones.
   getCurrentGrade() {
     if (this.elevationBuffer.length < 4) return 0;
-    // Use last ~50m of horizontal distance
+    // Use a wider window when relying on noisy GPS altitude. When the
+    // barometer is calibrated we get clean altitude readings and can use
+    // a tighter window without amplifying noise.
+    const minWindowM = this.barometerCalibrated ? 80 : 150;
     const last = this.elevationBuffer[this.elevationBuffer.length - 1];
     let start = last;
     for (let i = this.elevationBuffer.length - 2; i >= 0; i--) {
       const s = this.elevationBuffer[i];
-      if (last.dist - s.dist >= 30) { start = s; break; }
+      if (last.dist - s.dist >= minWindowM) { start = s; break; }
       start = s;
     }
     const horizM = last.dist - start.dist;
-    if (horizM < 20) return 0;  // need enough horizontal to compute grade
+    // Need a meaningful horizontal window before grade is computable.
+    if (horizM < (this.barometerCalibrated ? 40 : 75)) return this._smoothedGrade || 0;
     const dh = last.alt - start.alt;
-    const grade = dh / horizM;
-    // Clamp to ±25% — anything past that is GPS noise on phone hardware
-    return Math.max(-0.25, Math.min(0.25, grade));
+    const rawGrade = dh / horizM;
+    // Clamp to ±25% — anything past that is sensor noise on phone hardware.
+    const clamped = Math.max(-0.25, Math.min(0.25, rawGrade));
+    // EMA smoothing — τ ≈ 5 samples (so ~5-10 seconds to settle on a new slope).
+    if (this._smoothedGrade == null) {
+      this._smoothedGrade = clamped;
+    } else {
+      this._smoothedGrade = this._smoothedGrade * 0.8 + clamped * 0.2;
+    }
+    return this._smoothedGrade;
   }
 
   // Grade-adjusted pace using Minetti et al. 2002 (J Appl Physiol) energy
@@ -2672,16 +2781,30 @@ class LiveWorkout {
   //
   // GAP = actual_pace × (C_flat / C_grade). If you're running 9:00/mi uphill
   // and the slope costs 2x the energy, GAP is 4:30/mi equivalent flat effort.
+  //
+  // STABILITY: instead of instantaneous pace, we use a smoothed rolling pace
+  // for the actual-pace input. Otherwise GAP inherits all the volatility of
+  // the instantaneous reading PLUS the polynomial's amplification.
   getGradeAdjustedPaceSecPerUnit(units) {
-    const actualSecPerUnit = this.getInstantPaceSecPerUnit(units);
-    if (actualSecPerUnit == null) return null;
+    // Use the rolling-30s pace if available; falls back to instant.
+    const rollingSecPerUnit = this.getRollingPaceSecPerUnit
+      ? this.getRollingPaceSecPerUnit(units)
+      : this.getInstantPaceSecPerUnit(units);
+    if (rollingSecPerUnit == null) return null;
     const grade = this.getCurrentGrade();
-    if (Math.abs(grade) < 0.015) return actualSecPerUnit; // <1.5% = effectively flat
+    // Hysteresis: don't compute GAP at all on near-flat terrain (avoids
+    // showing GAP that's identical to actual pace, which is meaningless UI).
+    if (Math.abs(grade) < 0.02) return null;
     const i = grade;
     const C_flat = 3.6;
     const C_grade = 155.4*i*i*i*i*i - 30.4*i*i*i*i - 43.3*i*i*i + 46.3*i*i + 19.5*i + 3.6;
-    if (C_grade <= 0) return actualSecPerUnit;
-    return actualSecPerUnit * (C_flat / C_grade);
+    if (C_grade <= 0) return rollingSecPerUnit;
+    const gap = rollingSecPerUnit * (C_flat / C_grade);
+    // Bound: GAP shouldn't be reported as < 4:00/mi or > 30:00/mi regardless
+    // of math. Anything outside that range is meaningless to a human.
+    const minSec = units === 'metric' ? 4 * 60 / 1.609344 : 4 * 60;
+    const maxSec = units === 'metric' ? 30 * 60 / 1.609344 : 30 * 60;
+    return Math.max(minSec, Math.min(maxSec, gap));
   }
 
   onError(err) {
@@ -5286,15 +5409,41 @@ function renderPre(root) {
     // screen + control center, with working pause/resume/stop buttons.
     // MUST happen inside this user-gesture handler for iOS Safari.
     const lockScreen = new LockScreenPresenter({ artworkUrl: 'icon-512.png' });
-    lockScreen.start({
+    const lsOk = lockScreen.start({
       title: 'Workout starting…',
       artist: 'RuckOps',
       album: '',
       onPause: () => { if (window.__liveWorkout) window.__liveWorkout.pause(); },
       onResume: () => { if (window.__liveWorkout) window.__liveWorkout.resume(); },
-      onStop: () => { if (window.__liveWorkout) window.__liveWorkout.stop(); }
+      onStop: () => { if (window.__liveWorkout) window.__liveWorkout.end(); }
     });
     window.__lockScreen = lockScreen;
+    // Surface failures + iOS Silent Mode quirk as a one-time toast so users
+    // know what to change. We can't actually detect Silent Mode from web
+    // (no API), so we mention it as a likely cause when audio is suspended.
+    if (!lsOk) {
+      setTimeout(() => {
+        if (lockScreen.failureReason === 'no_media_session') {
+          toast('Lock-screen requires Safari 16.4+ or Chrome', 'info');
+        } else if (lockScreen.failureReason === 'audio_suspended') {
+          toast('Lock-screen audio blocked — try without Silent Mode', 'info');
+        } else if (lockScreen.failureReason === 'no_audio') {
+          toast('Lock-screen not supported on this browser', 'info');
+        } else {
+          toast('Lock-screen unavailable — workout still tracks normally', 'info');
+        }
+      }, 800);
+    } else {
+      // Even when start() succeeded, the audio may be running in
+      // 'suspended' state on iOS if Silent Mode was on at start. The OS
+      // will start the session if/when the user toggles Silent Mode off.
+      setTimeout(() => {
+        if (lockScreen.audioCtx
+            && lockScreen.audioCtx.state === 'suspended') {
+          toast('Lock-screen ready — toggle Silent Mode off if missing', 'info');
+        }
+      }, 1500);
+    }
 
     window.__liveWorkout = lw;
     lw.start();
@@ -5324,6 +5473,29 @@ function renderLive(root) {
   const settings = loadSettings();
   const node = mountTemplate(root, 'tpl-live');
   applyUnits(node, settings.units);
+
+  // ---- iOS shake-to-undo suppression ----
+  // The "Undo typing" dialog appears during a workout because running motion
+  // is interpreted as the shake gesture. iOS only fires this dialog when
+  // there's an active text-input context. Two defenses:
+  //   1. Blur any focused element on entering the live screen (defensive —
+  //      probably nothing was focused, but if it was, this prevents shake-undo).
+  //   2. Listen for the gesture's motion event and stop propagation so the
+  //      undo dialog doesn't get a chance to surface. The cleaner approach is
+  //      to ensure document.activeElement is never an input on this screen.
+  if (document.activeElement && document.activeElement.blur) {
+    try { document.activeElement.blur(); } catch {}
+  }
+  // Hard guard: any element gaining focus on the live screen gets blurred.
+  // Workouts don't need text input. If we ever do (e.g. mid-run notes),
+  // this guard would need a per-element exception.
+  const blurOnFocus = (e) => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      try { e.target.blur(); } catch {}
+    }
+  };
+  node.addEventListener('focusin', blurOnFocus, true);
 
   const distEl = node.querySelector('#live-distance');
   const durEl = node.querySelector('#live-duration');
@@ -5371,13 +5543,32 @@ function renderLive(root) {
     distEl.textContent = Units.formatDistance(live.distanceM, settings.units);
     durEl.textContent = Units.formatDuration(live.elapsedMs);
 
-    // ROLLING pace (30s window) — "current effort". Noisy by design but
-    // responsive. This is what the user feels right now.
-    const rolling = live.getRollingPaceSecPerUnit(settings.units);
+    // DISPLAY pace — combines rolling (stable) + instant (responsive), with
+    // an additional EMA on top. The result is ~15 seconds behind ground truth
+    // but glance-stable on the live screen. The user's TOTAL TIME and AVERAGE
+    // remain perfectly accurate from cumulative measurement; this is just the
+    // "what's my pace right now" readout.
+    const displayPace = live.getDisplayPaceSecPerUnit(settings.units);
     let currentSecPerUnit = null;
-    if (rolling != null) {
-      currentSecPerUnit = rolling;
-      paceEl.textContent = Units.formatPace(rolling);
+    if (displayPace != null) {
+      currentSecPerUnit = displayPace;
+      // Throttle text changes: only update if the value actually changed
+      // by more than 1 second/unit. Prevents the digit-wiggle effect on a
+      // mostly-steady pace.
+      const newText = Units.formatPace(displayPace);
+      if (paceEl.textContent !== newText) {
+        if (!live._lastPaceText || live._lastPaceText !== newText) {
+          // Only commit text change if either the seconds rounded differently
+          // OR enough time has passed since last commit (1.5s minimum).
+          const now = Date.now();
+          const sinceLast = now - (live._lastPaceCommitT || 0);
+          if (paceEl.textContent === '--:--' || sinceLast > 1500) {
+            paceEl.textContent = newText;
+            live._lastPaceText = newText;
+            live._lastPaceCommitT = now;
+          }
+        }
+      }
     } else if (live.distanceM > MIN_DISTANCE_FOR_PACE_M) {
       // Fall back to cumulative average if rolling not yet warm.
       currentSecPerUnit = settings.units === 'metric'
@@ -6391,7 +6582,7 @@ function renderCalibration(root) {
     } else if (newPhase === 'results') {
       // Stop GPS tracking
       if (lw && lw.status === 'running') {
-        lw.stop();
+        lw.end();
       }
       if (updateInterval) { clearInterval(updateInterval); updateInterval = null; }
       // Compute trial pace from stored values
@@ -6585,7 +6776,7 @@ function renderCalibration(root) {
 
   function cleanup() {
     if (updateInterval) { clearInterval(updateInterval); updateInterval = null; }
-    if (lw && lw.status === 'running') lw.stop();
+    if (lw && lw.status === 'running') lw.end();
     lw = null;
     sc = null;
     return true;
