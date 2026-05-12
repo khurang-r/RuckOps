@@ -703,11 +703,44 @@ body {
   margin-top: 8px;
 }
 
+/* F-ADAPT-UI: Adaptive UI baseline per COMPOSITION_REGISTRY.md §6.
+ * Live screen sub-metrics adapt to container width via container queries.
+ * Outside the primitive registry — this is UI-infrastructure, validated by
+ * form-factor visual checks at 320×568, 414×896, and 1024×1366.
+ */
+.live {
+  container-type: inline-size;
+  container-name: live;
+}
 .sub-metrics {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Auto-fit means: as many columns as fit while each is at least 80px wide.
+   * On a 320px iPhone SE: 320 / (80 + 8 gap) ≈ 3 columns. On a 1024 iPad:
+   * up to 6 columns. The 4-stat layout becomes responsive without media
+   * queries firing on viewport breakpoints. */
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
   gap: 8px;
   margin-top: 6vh;
+}
+
+@container live (max-width: 360px) {
+  .sub-metrics {
+    /* On very narrow containers, force 2-up to keep cards readable */
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sub-stat {
+    padding: 12px 4px;
+    min-height: 56px;
+  }
+}
+
+@container live (min-width: 720px) {
+  /* Tablets and landscape phones — allow more breathing room */
+  .sub-metrics {
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+  }
 }
 
 .sub-stat {
@@ -732,8 +765,23 @@ body {
 .sub-stat .val {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
-  font-size: 20px;
+  /* Fluid type: 18px on iPhone SE, scales up to 28px on tablets */
+  font-size: clamp(18px, 5vw, 28px);
   color: var(--text);
+}
+
+/* Reduce motion support: disable pulsing animations for users who request it
+ * via OS accessibility settings. The GPS-lost pulse and DR pulse are visual
+ * affordances, not load-bearing UX. */
+@media (prefers-reduced-motion: reduce) {
+  .gps-chip.lost,
+  .hr-chip.dr-active,
+  .pacing-banner-row {
+    animation: none !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .live-controls {
@@ -2187,4 +2235,146 @@ select {
   opacity: 0.55;
   margin-top: 6px;
   letter-spacing: 0.02em;
+}
+
+/* Diagnostics export row on summary — F-DIAG */
+.diag-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider, rgba(255,255,255,0.06));
+}
+.btn.btn-text.small {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  opacity: 0.6;
+  padding: 8px 16px;
+}
+.btn.btn-text.small:hover {
+  opacity: 1;
+}
+
+/* ----- F-PLAN UI ----- */
+/* Plan progress card on home — visible only when a plan is active */
+.plan-progress-card {
+  background: var(--surface);
+  border: 1px solid var(--divider, rgba(255,255,255,0.08));
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+  margin-top: 14px;
+}
+.plan-progress-card .panel-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+.plan-progress-card .panel-title {
+  font-family: 'Roboto Condensed', sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--olive, #4a5d23);
+  margin: 0;
+}
+.plan-progress-row {
+  height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 6px 0 8px;
+}
+.plan-progress-fill {
+  height: 100%;
+  background: var(--olive, #4a5d23);
+  transition: width 0.4s cubic-bezier(0.4, 0.0, 0.2, 1);
+  width: 0%;
+}
+
+.plans-link {
+  font-size: 12px;
+  margin-top: 12px;
+  opacity: 0.75;
+  display: inline-block;
+}
+
+/* Plans sheet — picker + active sections */
+.plans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+}
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg, #0D0F0D);
+  border: 1px solid var(--divider, rgba(255,255,255,0.12));
+  border-radius: 10px;
+  padding: 14px;
+  text-align: left;
+  color: var(--fg, #d8d4cc);
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.1s;
+}
+.plan-card:hover {
+  border-color: var(--olive, #4a5d23);
+}
+.plan-card:active {
+  transform: scale(0.99);
+}
+.plan-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.plan-card-label {
+  font-family: 'Roboto Condensed', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+.plan-card-duration {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--olive, #4a5d23);
+  letter-spacing: 0.08em;
+}
+.plan-card-desc {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 4px 0 0;
+}
+.plan-card-target,
+.plan-citation {
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+  opacity: 0.65;
+}
+.plan-card-action {
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--amber, #c9a45c);
+  text-align: right;
+}
+
+.plan-active-summary {
+  padding: 14px;
+  background: var(--bg, #0D0F0D);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.plan-active-label {
+  display: block;
+  font-family: 'Roboto Condensed', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--olive, #4a5d23);
+  margin-bottom: 6px;
 }

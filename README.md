@@ -47,6 +47,22 @@ npx serve .
 
 Then open `http://localhost:8000`. Note that geolocation in browsers requires HTTPS *or* localhost — `file://` won't work.
 
+## What's in v1.3
+
+This release introduces three changes, each governed by the [Composition Registry](COMPOSITION_REGISTRY.md). Tier labels are honest about what's measured vs. what's claimed.
+
+- **F-DIAG — workout diagnostics export (Tier 1).** Post-workout, tap "EXPORT DIAGNOSTICS" to download a JSON file with the workout record plus filter statistics, tracking-mode transitions, conformal-coverage scores, and sensor-health flags. Useful for debugging cross-device behavior. The export schema is documented in the registry under F-DIAG.
+- **F-ADAPT-UI — adaptive baseline (UI-infrastructure, validated by visual checks).** Live-screen tile grid uses CSS container queries to adapt from iPhone SE width (forces 2-up) to tablet (allows up to 6-up). Sub-stat values use `clamp()` fluid type. The GPS-lost and PDR-active pulses respect `prefers-reduced-motion`. UI quality lives outside the registry's tier system; visual regression is the validation.
+- **F-PLAN — coaching plans (Tier 2).** Three plans shipped: Couch-to-5K (12 weeks, Cooper progression), 12-Mile Ruck Prep (8 weeks, Knapik / U.S. Army FM 21-18), and Half Marathon (12 weeks, Pfitzinger 12/47). Each cites its source. When a plan is active, the home-screen WOD card shows today's prescribed workout. Each plan-day advances exactly once when the user saves a workout. The `PlanState` engine (P12) is round-trip-serialized so progress persists across sessions.
+- **F-PLAN-OVERRIDE — ACWR-aware schedule modification (Tier 2).** If ACWR > 1.5 (Gabbett 2016 injury threshold) AND a plan prescribes hard work, the home screen shows a rest-override instead. Easy days and rest days are never overridden. Tier 2 because both inputs (F-PLAN, ACWR) are Tier 2; the composition cannot exceed its weakest link.
+
+### What v1.3 explicitly does NOT claim
+- That coaching plans improve user race times, prevent injury, or replace human coaching. Plan content is evidence-cited; the *outcomes* claim is out of scope.
+- That tracking is now SOTA-equal to Garmin or Strava in the field. Field measurement against ground truth is unmeasured (v1.4+ work).
+- That conformal-coverage 95% holds outside i.i.d. synthetic data. Synthetic tests demonstrate the algorithm; in-session distribution shift would degrade coverage in ways that aren't yet quantified.
+
+The full audit of past claims and their honest tier classifications is in [COMPOSITION_REGISTRY.md §5](COMPOSITION_REGISTRY.md).
+
 ### Honest gaps in the web MVP
 
 These are deliberate, scope-locked. They live in the v2 native build, not here.

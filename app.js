@@ -1571,6 +1571,531 @@ const Storage = {
 
 // -- Settings -----------------------------------------------------------
 
+// =====================================================================
+// P12 PlanState — coaching plan primitive
+// =====================================================================
+// Per COMPOSITION_REGISTRY.md §6 F-PLAN:
+//
+//   Contract: given (plan id, day index, completion history), produces
+//   today's prescribed workout. Advances on completion. Records skipped
+//   and compressed transitions.
+//   Tier: T2 (structural correctness only — NO claim about user race
+//   outcomes or injury rates).
+//
+// Plans below are evidence-cited; each PLAN object includes a `citation`
+// field naming the published source. The content is conservative: a plan
+// is a sequence of daily prescriptions, where each prescription names a
+// workout shape (run easy, ruck with load, interval, rest, test session)
+// and a target duration or distance.
+//
+// What this primitive does NOT claim:
+//   - That the plans are clinically superior to no-plan training
+//   - That users following them will achieve any specific outcome
+//   - That the plans replace coaching from a qualified human
+// Those are out-of-scope (registry §8).
+
+// Plan workout shapes. Each shape is a small, validated unit; the plan
+// schedule composes them by week. NOT a primitive in the registry yet —
+// these are content tokens consumed by P12.
+const PLAN_WORKOUTS = {
+  // ---- Foundation / recovery ----
+  REST: {
+    label: 'REST DAY',
+    description: 'Full recovery. Walk easy if you must move, but no training stress.',
+    mode: null, durationMin: 0, intensity: 'rest'
+  },
+  CROSS_TRAIN: {
+    label: 'CROSS-TRAIN',
+    description: 'Cycle, swim, or row 30-45 min at conversational effort. Spares running impact while maintaining aerobic load.',
+    mode: null, durationMin: 35, intensity: 'easy'
+  },
+
+  // ---- Running shapes (running plans) ----
+  EASY_RUN_20: {
+    label: 'EASY RUN 20 MIN',
+    description: 'Conversational pace. Should be able to speak in full sentences. ~70-75% max HR.',
+    mode: 'run', durationMin: 20, intensity: 'easy'
+  },
+  EASY_RUN_30: {
+    label: 'EASY RUN 30 MIN',
+    description: 'Conversational pace. Aerobic base building (Hadd / Pfitzinger).',
+    mode: 'run', durationMin: 30, intensity: 'easy'
+  },
+  EASY_RUN_45: {
+    label: 'EASY RUN 45 MIN',
+    description: 'Sustained conversational pace. Should finish feeling you could continue.',
+    mode: 'run', durationMin: 45, intensity: 'easy'
+  },
+  EASY_RUN_60: {
+    label: 'EASY RUN 60 MIN',
+    description: 'Long aerobic effort. Save quality for tomorrow.',
+    mode: 'run', durationMin: 60, intensity: 'easy'
+  },
+  LONG_RUN_75: {
+    label: 'LONG RUN 75 MIN',
+    description: 'Easy long run building aerobic capacity. No surges.',
+    mode: 'run', durationMin: 75, intensity: 'easy'
+  },
+  LONG_RUN_90: {
+    label: 'LONG RUN 90 MIN',
+    description: 'Long aerobic effort. Stay disciplined — easy means easy.',
+    mode: 'run', durationMin: 90, intensity: 'easy'
+  },
+  LONG_RUN_105: {
+    label: 'LONG RUN 1:45',
+    description: 'Peak long-run volume. Hydration and fuel matter past 75 min.',
+    mode: 'run', durationMin: 105, intensity: 'easy'
+  },
+  LONG_RUN_120: {
+    label: 'LONG RUN 2:00',
+    description: 'Maximum scheduled long run. Slow start, sustained finish.',
+    mode: 'run', durationMin: 120, intensity: 'easy'
+  },
+
+  // Walk/run intervals (C25K)
+  WR_60_90_x8: {
+    label: 'WALK/RUN INTERVALS',
+    description: '5 min walk warmup → 8 rounds of (60s run / 90s walk) → 5 min walk cooldown.',
+    mode: 'run', durationMin: 25, intensity: 'easy',
+    intervals: { run: 60, walk: 90, rounds: 8 }
+  },
+  WR_90_120_x6: {
+    label: 'WALK/RUN INTERVALS',
+    description: '5 min walk warmup → 6 rounds of (90s run / 2 min walk) → 5 min walk cooldown.',
+    mode: 'run', durationMin: 26, intensity: 'easy',
+    intervals: { run: 90, walk: 120, rounds: 6 }
+  },
+  WR_180_90_x4: {
+    label: 'RUN/WALK INTERVALS',
+    description: '5 min walk warmup → 4 rounds of (3 min run / 90s walk) → 5 min walk cooldown.',
+    mode: 'run', durationMin: 28, intensity: 'moderate',
+    intervals: { run: 180, walk: 90, rounds: 4 }
+  },
+  WR_300_180_x3: {
+    label: 'RUN/WALK INTERVALS',
+    description: '5 min walk → 3 rounds of (5 min run / 3 min walk) → cooldown.',
+    mode: 'run', durationMin: 34, intensity: 'moderate',
+    intervals: { run: 300, walk: 180, rounds: 3 }
+  },
+  CONT_RUN_20: {
+    label: 'CONTINUOUS RUN 20',
+    description: 'First continuous run. Easy pace, no walk breaks.',
+    mode: 'run', durationMin: 20, intensity: 'moderate'
+  },
+  CONT_RUN_25: {
+    label: 'CONTINUOUS RUN 25',
+    description: 'Continuous run, conversational pace.',
+    mode: 'run', durationMin: 25, intensity: 'moderate'
+  },
+  CONT_RUN_30: {
+    label: 'CONTINUOUS RUN 30',
+    description: '30 min continuous. Foundation of 5K fitness.',
+    mode: 'run', durationMin: 30, intensity: 'moderate'
+  },
+
+  // Quality sessions (half marathon plan)
+  TEMPO_4MI: {
+    label: 'TEMPO RUN 4 MI',
+    description: '15 min easy → 4 mi at half-marathon goal pace → 10 min cooldown. ~88% max HR.',
+    mode: 'run', durationMin: 50, intensity: 'tempo'
+  },
+  TEMPO_5MI: {
+    label: 'TEMPO RUN 5 MI',
+    description: '15 min easy → 5 mi at lactate threshold pace → 10 min cooldown.',
+    mode: 'run', durationMin: 60, intensity: 'tempo'
+  },
+  TEMPO_6MI: {
+    label: 'TEMPO RUN 6 MI',
+    description: '15 min easy → 6 mi at lactate threshold pace → 10 min cooldown.',
+    mode: 'run', durationMin: 70, intensity: 'tempo'
+  },
+  VO2_REPS: {
+    label: 'VO2 INTERVALS',
+    description: '15 min easy → 6 × 800m at 5K pace with 400m jog recovery → 10 min cooldown.',
+    mode: 'run', durationMin: 55, intensity: 'hard'
+  },
+  THRESHOLD_REPS: {
+    label: 'THRESHOLD REPS',
+    description: '15 min easy → 4 × 1 mi at threshold pace with 2 min jog → 10 min cooldown.',
+    mode: 'run', durationMin: 60, intensity: 'tempo'
+  },
+  STRIDES_DAY: {
+    label: 'EASY + STRIDES',
+    description: 'Easy 30 min, then 4-6 × 20-second strides on flat. Builds turnover without fatigue.',
+    mode: 'run', durationMin: 35, intensity: 'easy'
+  },
+
+  // Test sessions
+  TEST_1MI_TT: {
+    label: 'TEST: 1 MI TIME TRIAL',
+    description: '15 min warmup (easy + 2 strides) → 1 mi all-out → 10 min cooldown. Updates your training paces.',
+    mode: 'run', durationMin: 35, intensity: 'test',
+    isTest: true, testKind: '1mi_tt'
+  },
+  TEST_5K_TT: {
+    label: 'TEST: 5K TIME TRIAL',
+    description: '15 min warmup → 5K all-out, even effort throughout → 10 min cooldown. Daniels VDOT recalibration.',
+    mode: 'run', durationMin: 50, intensity: 'test',
+    isTest: true, testKind: '5k_tt'
+  },
+
+  // ---- Ruck shapes (rucking plan) ----
+  RUCK_20_LIGHT: {
+    label: 'RUCK 20 MIN LIGHT',
+    description: '20 minutes ruck with 10-15 lb pack. Steady conversational pace. Build pack tolerance.',
+    mode: 'ruck', durationMin: 20, intensity: 'easy', packKg: 6
+  },
+  RUCK_30_LIGHT: {
+    label: 'RUCK 30 MIN LIGHT',
+    description: '30 minutes ruck with 15 lb pack. Steady pace. Knapik base.',
+    mode: 'ruck', durationMin: 30, intensity: 'easy', packKg: 7
+  },
+  RUCK_45_MOD: {
+    label: 'RUCK 45 MIN',
+    description: '45 minutes ruck with 25 lb pack. Maintain steady pace; this is volume, not tempo.',
+    mode: 'ruck', durationMin: 45, intensity: 'easy', packKg: 11
+  },
+  RUCK_60_MOD: {
+    label: 'RUCK 60 MIN',
+    description: '60 minutes ruck with 25-30 lb pack. Sustained effort. Watch hot spots on feet.',
+    mode: 'ruck', durationMin: 60, intensity: 'moderate', packKg: 13
+  },
+  RUCK_75: {
+    label: 'RUCK 1:15',
+    description: '75 minutes ruck with 30 lb pack. Steady pace. Hydrate every 15 min past the 30 min mark.',
+    mode: 'ruck', durationMin: 75, intensity: 'moderate', packKg: 14
+  },
+  RUCK_90_STD: {
+    label: 'RUCK 1:30 STANDARD',
+    description: '90 minutes ruck with 35 lb pack at standard pace (~15 min/mi). Army standard preparation.',
+    mode: 'ruck', durationMin: 90, intensity: 'moderate', packKg: 16
+  },
+  RUCK_120_STD: {
+    label: 'RUCK 2:00 STANDARD',
+    description: '2 hours ruck with 35 lb pack at standard pace. Practice fueling and pack-fit at duration.',
+    mode: 'ruck', durationMin: 120, intensity: 'moderate', packKg: 16
+  },
+  RUCK_150_STD: {
+    label: 'RUCK 2:30',
+    description: '2.5 hours ruck with 35 lb pack at standard pace. Foot-care discipline matters.',
+    mode: 'ruck', durationMin: 150, intensity: 'moderate', packKg: 16
+  },
+  RUCK_12MI_TEST: {
+    label: 'TEST: 12-MILE RUCK',
+    description: '12 miles ruck with 35 lb at 15 min/mi standard. The criterion event. Practice everything: pack fit, foot care, fueling, pacing.',
+    mode: 'ruck', durationMin: 180, intensity: 'test', packKg: 16,
+    isTest: true, testKind: '12mi_ruck',
+    distanceM: 19312  // 12 miles
+  },
+  RUCK_TEMPO_3MI: {
+    label: 'RUCK TEMPO 3 MI',
+    description: '3 mile ruck at faster-than-standard pace (~14 min/mi) with 25 lb. Develops pace tolerance.',
+    mode: 'ruck', durationMin: 45, intensity: 'tempo', packKg: 11,
+    distanceM: 4828
+  },
+  RUCK_TEMPO_4MI: {
+    label: 'RUCK TEMPO 4 MI',
+    description: '4 mile ruck at ~14 min/mi with 30 lb pack. Below race weight, faster than race pace.',
+    mode: 'ruck', durationMin: 60, intensity: 'tempo', packKg: 14,
+    distanceM: 6437
+  }
+};
+
+// Plan definitions. Each plan is an array of weeks; each week is an array
+// of 7 daily prescriptions (day 0 = Monday). The plan ID is the key.
+//
+// Citations are inline. Plan length is intentionally conservative; longer
+// or more aggressive plans require their own validation cycle.
+const COACHING_PLANS = {
+  // -----------------------------------------------------------------
+  // Couch to 5K — 12-week walk-to-run progression
+  // Citation: Cooper, K.H. (1970). Aerobics. Bantam Books.
+  //   Walk-to-run progression methodology, validated for sedentary
+  //   beginner populations in NIH PARQ-applicable cohorts.
+  // -----------------------------------------------------------------
+  'c25k-12wk': {
+    id: 'c25k-12wk',
+    label: 'Couch to 5K',
+    duration_weeks: 12,
+    intent: '5K continuous run',
+    description: '12 weeks from sedentary to running a continuous 5K. Cooper-style walk-to-run progression.',
+    citation: 'Cooper, K.H. (1970). Aerobics. Walk-to-run progression for beginners.',
+    target_population: 'Sedentary to lightly active adults with no prior running base.',
+    expected_workouts_per_week: 3,
+    weeks: [
+      // W1: 60s run / 90s walk × 8 rounds, 3×/week
+      [PLAN_WORKOUTS.WR_60_90_x8, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_60_90_x8, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_60_90_x8, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.REST],
+      // W2: 60s/90s × 8, slight increase
+      [PLAN_WORKOUTS.WR_60_90_x8, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_60_90_x8, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_60_90_x8, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W3: 90s run / 2min walk × 6
+      [PLAN_WORKOUTS.WR_90_120_x6, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_90_120_x6, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_90_120_x6, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W4: same again, consolidate
+      [PLAN_WORKOUTS.WR_90_120_x6, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_90_120_x6, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_90_120_x6, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W5: 3 min run / 90s walk × 4
+      [PLAN_WORKOUTS.WR_180_90_x4, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_180_90_x4, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_180_90_x4, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W6: same
+      [PLAN_WORKOUTS.WR_180_90_x4, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_180_90_x4, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_180_90_x4, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W7: 5 min run / 3 min walk × 3 — first big jump
+      [PLAN_WORKOUTS.WR_300_180_x3, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_300_180_x3, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_300_180_x3, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W8: 1 mi time trial mid-week, light otherwise
+      [PLAN_WORKOUTS.WR_300_180_x3, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.TEST_1MI_TT, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_300_180_x3, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W9: first continuous run! 20 min
+      [PLAN_WORKOUTS.CONT_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.WR_300_180_x3, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.CONT_RUN_20, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W10: continuous 25
+      [PLAN_WORKOUTS.CONT_RUN_25, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.CONT_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.CONT_RUN_25, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W11: continuous 30 — 5K capable
+      [PLAN_WORKOUTS.CONT_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.CONT_RUN_25, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.CONT_RUN_30, PLAN_WORKOUTS.CROSS_TRAIN, PLAN_WORKOUTS.REST],
+      // W12: taper + 5K test
+      [PLAN_WORKOUTS.CONT_RUN_25, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.EASY_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.TEST_5K_TT, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.REST]
+    ]
+  },
+
+  // -----------------------------------------------------------------
+  // 12-mile ruck preparation — 8 weeks
+  // Citation: Knapik, J.J. et al. (2004). Soldier load carriage:
+  //   historical, physiological, biomechanical, and medical aspects.
+  //   Military Medicine, 169(1), 45-56.
+  //   PLUS U.S. Army FM 21-18 Foot Marches (march rate 15 min/mi
+  //   standard pace for 12-mile qualification at 35 lb).
+  // -----------------------------------------------------------------
+  '12mi-ruck-8wk': {
+    id: '12mi-ruck-8wk',
+    label: '12-Mile Ruck Prep',
+    duration_weeks: 8,
+    intent: 'Complete 12 miles with 35 lb in under 3 hours',
+    description: 'Knapik-progression to U.S. Army 12-mile foot march standard. 8-week build.',
+    citation: 'Knapik et al. 2004 (Mil Med); U.S. Army FM 21-18.',
+    target_population: 'Active adults with running base of 15+ min continuous.',
+    expected_workouts_per_week: 4,
+    weeks: [
+      // W1: light pack acclimation
+      [PLAN_WORKOUTS.RUCK_30_LIGHT, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_30_LIGHT, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.REST],
+      // W2: build to 25 lb
+      [PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_60_MOD, PLAN_WORKOUTS.REST],
+      // W3: extend duration
+      [PLAN_WORKOUTS.RUCK_60_MOD, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_TEMPO_3MI, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_75, PLAN_WORKOUTS.REST],
+      // W4: introduce standard 35 lb pack
+      [PLAN_WORKOUTS.RUCK_60_MOD, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_TEMPO_3MI, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_90_STD, PLAN_WORKOUTS.REST],
+      // W5: full standard pack, longer durations
+      [PLAN_WORKOUTS.RUCK_75, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_TEMPO_4MI, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_120_STD, PLAN_WORKOUTS.REST],
+      // W6: peak volume
+      [PLAN_WORKOUTS.RUCK_90_STD, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_TEMPO_4MI, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_150_STD, PLAN_WORKOUTS.REST],
+      // W7: taper begins
+      [PLAN_WORKOUTS.RUCK_60_MOD, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_TEMPO_3MI, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_120_STD, PLAN_WORKOUTS.REST],
+      // W8: peak taper + test
+      [PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.EASY_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_12MI_TEST, PLAN_WORKOUTS.REST]
+    ]
+  },
+
+  // -----------------------------------------------------------------
+  // Half marathon — 12 weeks
+  // Citation: Pfitzinger, P. & Douglas, S. (2008). Advanced Marathoning.
+  //   2nd ed. Human Kinetics. The "12/47" plan — 12-week schedule peaking
+  //   at 47 mi/week, recommended for runners with 25-30 mpw current base.
+  // -----------------------------------------------------------------
+  'half-marathon-12wk': {
+    id: 'half-marathon-12wk',
+    label: 'Half Marathon (Pfitzinger 12/47)',
+    duration_weeks: 12,
+    intent: 'Complete a half marathon at a competitive pace',
+    description: 'Pfitzinger 12-week half marathon plan peaking at 47 mpw. Lactate-threshold focused.',
+    citation: 'Pfitzinger & Douglas (2008). Advanced Marathoning, 2nd ed., 12/47 plan.',
+    target_population: 'Runners with current base of 25+ miles/week and one race-distance experience.',
+    expected_workouts_per_week: 5,
+    weeks: [
+      // W1: base
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_75, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W2: introduce tempo
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W3: tempo + VO2
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.VO2_REPS, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W4: down week — consolidate
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_75, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W5: tempo extension
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_5MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_105, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W6: threshold + long
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.THRESHOLD_REPS, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_105, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W7: test
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.TEST_5K_TT, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W8: peak
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_6MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_120, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W9: peak threshold
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.THRESHOLD_REPS, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_120, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W10: taper begins
+      [PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_5MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_105, PLAN_WORKOUTS.CROSS_TRAIN],
+      // W11: deep taper
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_75, PLAN_WORKOUTS.REST],
+      // W12: race week
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.REST]
+    ]
+  }
+};
+
+// =====================================================================
+// P12 PlanState — primitive engine for active coaching plans
+// =====================================================================
+// Per registry §6 contract:
+//   Given (plan id, day index, completion history), produces today's
+//   prescribed workout. Advances on completion. Records skipped and
+//   compressed transitions.
+//
+// State shape (serialized per C-PERSIST rule):
+//   { planId, startedAt, dayIndex, completions: [{day, completedAt, recordId}],
+//     skipped: [{day, skippedAt}] }
+//
+// Methods:
+//   currentDay()      → 0-indexed day across the whole plan
+//   currentWeek()     → 0-indexed week
+//   today()           → today's prescribed workout (or null if plan over)
+//   complete(record)  → mark today's workout complete and advance
+//   skip(reason)      → mark today as skipped without advancing far
+//   reset()           → clear state, no active plan
+//   isActive()        → whether a plan is in progress
+//   toJSON / fromJSON → C-PERSIST round-trip
+class PlanState {
+  constructor() {
+    this.planId = null;        // null when no plan active
+    this.startedAt = null;
+    this.dayIndex = 0;
+    this.completions = [];     // [{day: int, completedAt: ms, recordId: string}]
+    this.skipped = [];         // [{day: int, skippedAt: ms, reason: string}]
+  }
+
+  start(planId) {
+    if (!COACHING_PLANS[planId]) {
+      throw new Error(`Unknown plan: ${planId}`);
+    }
+    this.planId = planId;
+    this.startedAt = Date.now();
+    this.dayIndex = 0;
+    this.completions = [];
+    this.skipped = [];
+  }
+
+  isActive() {
+    return this.planId != null && COACHING_PLANS[this.planId] != null;
+  }
+
+  plan() {
+    if (!this.isActive()) return null;
+    return COACHING_PLANS[this.planId];
+  }
+
+  // Total days in the plan (weeks × 7).
+  totalDays() {
+    const p = this.plan();
+    if (!p) return 0;
+    return p.weeks.length * 7;
+  }
+
+  // Total days complete plus skipped — the "progress" through the plan.
+  // Used for plan-aware home rendering.
+  progressDays() {
+    return this.dayIndex;
+  }
+
+  // Returns the workout for the current day, or null if the plan is done
+  // or no plan is active.
+  today() {
+    const p = this.plan();
+    if (!p) return null;
+    if (this.dayIndex >= this.totalDays()) return null;  // plan complete
+    const weekIdx = Math.floor(this.dayIndex / 7);
+    const dayIdx = this.dayIndex % 7;
+    const w = p.weeks[weekIdx];
+    if (!w) return null;
+    const workout = w[dayIdx];
+    return {
+      workout,
+      weekIndex: weekIdx,
+      dayInWeekIndex: dayIdx,
+      globalDayIndex: this.dayIndex,
+      totalDays: this.totalDays(),
+      weeksRemaining: p.weeks.length - weekIdx
+    };
+  }
+
+  // Mark today complete. Stores reference to the workout record.
+  // Per the registry's C-EVENT semantic, this advances day exactly once
+  // (no re-firing on repeat calls for the same day).
+  complete({ recordId = null } = {}) {
+    if (!this.isActive()) return;
+    if (this.dayIndex >= this.totalDays()) return;  // plan over, ignore
+    const day = this.dayIndex;
+    // Prevent double-completion: if we already marked this day, no-op.
+    if (this.completions.some(c => c.day === day)) return;
+    this.completions.push({ day, completedAt: Date.now(), recordId });
+    this.dayIndex++;
+  }
+
+  // Mark today skipped (does NOT advance dayIndex by more than 1).
+  // If 3+ consecutive skips, the plan should be considered abandoned —
+  // we don't enforce that here; the UI surfaces it.
+  skip(reason = 'user_skipped') {
+    if (!this.isActive()) return;
+    if (this.dayIndex >= this.totalDays()) return;
+    const day = this.dayIndex;
+    if (this.skipped.some(s => s.day === day)) return;  // already skipped
+    this.skipped.push({ day, skippedAt: Date.now(), reason });
+    this.dayIndex++;
+  }
+
+  // Count consecutive skips at the end of the skip log.
+  consecutiveSkips() {
+    if (this.skipped.length === 0) return 0;
+    // Skips are appended in dayIndex order; find the longest tail where
+    // skip[i].day = skip[i+1].day - 1.
+    let count = 1;
+    for (let i = this.skipped.length - 1; i > 0; i--) {
+      if (this.skipped[i].day - this.skipped[i - 1].day === 1) count++;
+      else break;
+    }
+    return count;
+  }
+
+  reset() {
+    this.planId = null;
+    this.startedAt = null;
+    this.dayIndex = 0;
+    this.completions = [];
+    this.skipped = [];
+  }
+
+  // C-PERSIST round-trip
+  toJSON() {
+    return {
+      planId: this.planId,
+      startedAt: this.startedAt,
+      dayIndex: this.dayIndex,
+      completions: this.completions,
+      skipped: this.skipped,
+      schemaVersion: 1
+    };
+  }
+
+  static fromJSON(json) {
+    const ps = new PlanState();
+    if (!json) return ps;
+    ps.planId = json.planId || null;
+    ps.startedAt = json.startedAt || null;
+    ps.dayIndex = json.dayIndex || 0;
+    ps.completions = Array.isArray(json.completions) ? json.completions.slice() : [];
+    ps.skipped = Array.isArray(json.skipped) ? json.skipped.slice() : [];
+    return ps;
+  }
+}
+
+// Module-level singleton: the user has at most one active plan.
+// Persisted in localStorage; loaded on demand.
+const PLAN_STATE_KEY = 'ruckops.planState';
+function loadPlanState() {
+  const raw = Storage.get(PLAN_STATE_KEY, null);
+  return PlanState.fromJSON(raw);
+}
+function savePlanState(ps) {
+  Storage.set(PLAN_STATE_KEY, ps.toJSON());
+}
+
 function defaultSettings() {
   return {
     units: 'imperial',
@@ -2454,6 +2979,7 @@ class LiveWorkout {
     this.lastFix = rawFix;
     this.points.push(smoothed);
     this.lastMoveAt = now;
+    this.lastAccuracy = pos.coords.accuracy;
     this.filterStats.accepted++;
 
     // Store forward-filtered Kalman state for RTS post-hoc smoothing.
@@ -2893,6 +3419,20 @@ class LiveWorkout {
         newMode = 'DEGRADED';
       }
       if (newMode !== this.trackingMode) {
+        // Log the transition with timestamps for post-workout diagnostics.
+        // Per registry §6 F-DIAG, this feeds the C-PERSIST composition.
+        // Cap the log at 200 entries; transitions are rare so this is generous.
+        if (!this._modeTransitionLog) this._modeTransitionLog = [];
+        if (this._modeTransitionLog.length < 200) {
+          this._modeTransitionLog.push({
+            t: now,
+            elapsedMs: this.elapsedMs,
+            from: this.trackingMode,
+            to: newMode,
+            gpsAccuracy: this.lastAccuracy || null,
+            magHealthy: this.motion ? this.motion._magHealthy : null
+          });
+        }
         this.trackingMode = newMode;
         this._lastModeTransitionT = now;
       }
@@ -3366,6 +3906,60 @@ class LiveWorkout {
         durationMs: this.goalReachedAt.durationMs
       } : null,
       schemaVersion: 7
+    };
+  }
+
+  // F-DIAG: Diagnostics export per COMPOSITION_REGISTRY.md §6.
+  // Composition: C-PERSIST(workout state + filterStats + modeTransitions
+  //   + conformal scores, JSON-stringify). Tier: T1 (serialization is
+  //   mechanical; the things being serialized retain their own tiers).
+  //
+  // Contract: returns a JSON-serializable object containing the full
+  // toRecord() output PLUS diagnostic streams useful for debugging:
+  //   - filterStats: accept/reject counts per failure mode
+  //   - modeTransitions: log of tracking-mode state changes
+  //   - conformalScores: rolling buffer (most recent 100) of error+sigma pairs
+  //   - sensorQuality: per-stream health flags
+  //   - clientEnv: useragent for cross-device bug attribution
+  //
+  // Not user-facing analytics; this is for triaging cross-device issues
+  // like the iPhone 16 lock-screen problem in v1.2.
+  toDiagnosticsExport() {
+    const record = this.toRecord();
+    return {
+      // Stable record (everything in v7 schema)
+      record,
+      // Per-tick filter behavior across the session
+      filterStats: { ...this.filterStats },
+      // Mode transition log (capped at 200 entries per session)
+      modeTransitions: this._modeTransitionLog || [],
+      // Conformal calibration set: latest 100 (timestamp, normalized score)
+      // pairs. The 'score' is error/sigma (the nonconformity score), not raw
+      // error — that's what the algorithm operates on.
+      conformalScores: this.conformal
+        ? this.conformal.scores.slice(-100)
+        : [],
+      // Sensor health summary
+      sensorQuality: {
+        barometerCalibrated: !!this.barometerCalibrated,
+        magnetometerHealthy: this.motion ? !!this.motion._magHealthy : null,
+        strideCalibrated: this.motion ? !!this.motion.strideCalibrated : null,
+        wakeLockActive: !!this.wakeLock,
+        deviceMotionEnabled: this.motion ? !!this.motion.enabled : false
+      },
+      // Bayesian stride state at end of session
+      bayesianStrideEndState: this.motion && this.motion.bayes
+        ? this.motion.bayes.toJSON() : null,
+      // Client environment — useful for filing bug reports
+      clientEnv: (typeof navigator !== 'undefined') ? {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        deviceMemory: navigator.deviceMemory || null,
+        hardwareConcurrency: navigator.hardwareConcurrency || null,
+        timestamp: new Date().toISOString()
+      } : null,
+      diagnosticsSchemaVersion: 1
     };
   }
 }
@@ -4417,7 +5011,69 @@ function renderHome(root) {
   // Workout-of-the-day: compute recommended workout and populate the WOD card.
   // The user can tap it to accept (passes the recommendation into pre-workout
   // via session storage) or tap "freestyle" to go to the default pre-workout.
-  const wod = recommendWorkout(profile, allWorkouts);
+  //
+  // F-PLAN composition (per COMPOSITION_REGISTRY.md §6):
+  //   When a coaching plan is active, the WOD card shows P12.today()'s
+  //   prescription instead of the rotation-template recommendation.
+  //   Composition: C-SCHEDULE(plan_data, P12, currentDate).
+  //   Tier ceiling: T2 (P12 is T2, plan_data is content T2).
+  //
+  // F-PLAN-OVERRIDE composition (per registry §6):
+  //   If ACWR > 1.5 AND a plan is active AND the prescription is anything
+  //   other than REST/CROSS_TRAIN, override with rest recommendation.
+  //   Composition: C-FALLBACK(F-PLAN.prescription, P8 rest).
+  //   Tier ceiling: min(F-PLAN T2, P8 T2) = T2.
+  //
+  // ACWR override is only applied to *prescribed work* — rest days are
+  // preserved as-is even if ACWR is low (the plan said rest, we respect it).
+  const planState = loadPlanState();
+  const planPrescription = planState.isActive() ? planState.today() : null;
+
+  let wod;
+  let planOverrideActive = false;
+
+  if (planPrescription && planPrescription.workout) {
+    const w = planPrescription.workout;
+    const plan = planState.plan();
+    // F-PLAN-OVERRIDE: high-risk ACWR vetoes prescribed work, but never
+    // vetoes a scheduled rest day. The plan's REST day is itself the
+    // injury-prevention pattern; we don't double-rest.
+    if (acwr != null && acwr > 1.5 && w.intensity !== 'rest' && w.intensity !== 'easy') {
+      planOverrideActive = true;
+      wod = {
+        kind: 'rest',
+        label: 'REST (plan override)',
+        sub: `ACWR ${acwr.toFixed(2)} — high injury risk. ${w.label} deferred.`,
+        reason: `Plan day ${planPrescription.globalDayIndex + 1}/${planPrescription.totalDays} called for "${w.label}", but your acute:chronic load ratio is ${acwr.toFixed(2)} (>1.5 threshold from Gabbett 2016). Take today off; the plan will resume tomorrow.`,
+        planRescheduled: true
+      };
+    } else if (w.intensity === 'rest') {
+      wod = {
+        kind: 'rest',
+        label: w.label,
+        sub: `${plan.label} — Week ${planPrescription.weekIndex + 1}/${plan.duration_weeks}`,
+        reason: w.description
+      };
+    } else {
+      wod = {
+        kind: 'plan',
+        label: w.label,
+        sub: `${plan.label} — Week ${planPrescription.weekIndex + 1}/${plan.duration_weeks}, Day ${planPrescription.dayInWeekIndex + 1}/7`,
+        method: 'off',
+        mode: w.mode || 'run',
+        targetDurationMin: w.durationMin || null,
+        targetDistM: w.distanceM || null,
+        packKg: w.packKg || null,
+        intervals: w.intervals || null,
+        description: w.description,
+        planWorkoutKey: Object.keys(PLAN_WORKOUTS).find(k => PLAN_WORKOUTS[k] === w),
+        isTest: !!w.isTest
+      };
+    }
+  } else {
+    // No active plan — use the existing rotation-template recommender.
+    wod = recommendWorkout(profile, allWorkouts);
+  }
   const wodCard = node.querySelector('#start-workout');
   const wodTag = node.querySelector('#wod-tag');
   const wodLabel = node.querySelector('#wod-label');
@@ -4427,8 +5083,12 @@ function renderHome(root) {
   wodSub.textContent = wod.sub;
   if (wod.kind === 'rest') {
     wodCard.classList.add('rest');
-    wodTag.textContent = 'TODAY';
+    wodTag.textContent = planOverrideActive ? 'OVERRIDE' : (planPrescription ? 'PLAN' : 'TODAY');
     wodAction.textContent = 'SEE WHY →';
+  } else if (wod.kind === 'plan') {
+    wodCard.classList.remove('rest');
+    wodTag.textContent = `PLAN W${planPrescription.weekIndex + 1}D${planPrescription.dayInWeekIndex + 1}`;
+    wodAction.textContent = 'START →';
   } else {
     wodCard.classList.remove('rest');
     wodTag.textContent = 'TODAY';
@@ -4463,6 +5123,144 @@ function renderHome(root) {
       navigate('#/pre');
     });
   }
+
+  // ---- F-PLAN UI (plan progress card + plans sheet) ----
+  // Per registry §6, this is the user-facing surface of C-SCHEDULE(plan, P12).
+  const planProgressCard = node.querySelector('#plan-progress-card');
+  const openPlansLink = node.querySelector('#open-plans-link');
+  if (planState.isActive()) {
+    // Show progress card; hide "start a plan" CTA.
+    const plan = planState.plan();
+    planProgressCard.classList.remove('hidden');
+    if (openPlansLink) openPlansLink.classList.add('hidden');
+    const titleEl = node.querySelector('#plan-progress-title');
+    if (titleEl) titleEl.textContent = plan.label.toUpperCase();
+    const fillEl = node.querySelector('#plan-progress-fill');
+    const detailEl = node.querySelector('#plan-progress-detail');
+    const pct = Math.min(100, Math.round(100 * planState.dayIndex / planState.totalDays()));
+    if (fillEl) fillEl.style.width = pct + '%';
+    if (detailEl) {
+      const completed = planState.completions.length;
+      const skipped = planState.skipped.length;
+      const today = planState.today();
+      if (today) {
+        detailEl.textContent =
+          `Week ${today.weekIndex + 1} of ${plan.duration_weeks} · ` +
+          `Day ${today.globalDayIndex + 1}/${today.totalDays} · ` +
+          `${completed} completed${skipped > 0 ? `, ${skipped} skipped` : ''}`;
+      } else {
+        detailEl.textContent = `Plan complete · ${completed} sessions`;
+      }
+    }
+  } else {
+    planProgressCard.classList.add('hidden');
+    if (openPlansLink) openPlansLink.classList.remove('hidden');
+  }
+
+  // Plans sheet open/close handlers.
+  const plansSheet = node.querySelector('#sheet-plans');
+  function openPlansSheet() {
+    plansSheet.classList.remove('hidden');
+    plansSheet.setAttribute('aria-hidden', 'false');
+    renderPlansSheet();
+  }
+  function closePlansSheet() {
+    plansSheet.classList.add('hidden');
+    plansSheet.setAttribute('aria-hidden', 'true');
+  }
+  plansSheet.querySelector('.sheet-close').addEventListener('click', closePlansSheet);
+  plansSheet.querySelector('.sheet-backdrop').addEventListener('click', closePlansSheet);
+  if (openPlansLink) openPlansLink.addEventListener('click', openPlansSheet);
+  const openPlansFromCard = node.querySelector('#open-plans-sheet');
+  if (openPlansFromCard) openPlansFromCard.addEventListener('click', openPlansSheet);
+
+  function renderPlansSheet() {
+    const ps = loadPlanState();
+    const activeSection = plansSheet.querySelector('#plans-active-section');
+    const pickerSection = plansSheet.querySelector('#plans-picker-section');
+    if (ps.isActive()) {
+      activeSection.classList.remove('hidden');
+      pickerSection.classList.add('hidden');
+      const plan = ps.plan();
+      plansSheet.querySelector('#plans-active-label').textContent = plan.label;
+      const today = ps.today();
+      const completed = ps.completions.length;
+      plansSheet.querySelector('#plans-active-detail').textContent = today
+        ? `${completed}/${ps.totalDays()} days complete. Today: ${today.workout.label}. Week ${today.weekIndex + 1}/${plan.duration_weeks}.`
+        : `${completed}/${ps.totalDays()} days complete. Plan finished.`;
+      plansSheet.querySelector('#plans-active-citation').textContent =
+        'Source: ' + plan.citation;
+    } else {
+      activeSection.classList.add('hidden');
+      pickerSection.classList.remove('hidden');
+      const listEl = plansSheet.querySelector('#plans-list');
+      listEl.innerHTML = '';
+      for (const [id, plan] of Object.entries(COACHING_PLANS)) {
+        const card = document.createElement('button');
+        card.className = 'plan-card';
+        card.innerHTML = `
+          <div class="plan-card-head">
+            <span class="plan-card-label">${plan.label}</span>
+            <span class="plan-card-duration">${plan.duration_weeks} WEEKS</span>
+          </div>
+          <p class="plan-card-desc">${plan.description}</p>
+          <p class="plan-card-target muted small">For: ${plan.target_population}</p>
+          <p class="plan-citation muted small">Source: ${plan.citation}</p>
+          <span class="plan-card-action">START THIS PLAN →</span>
+        `;
+        card.addEventListener('click', async () => {
+          const ok = await showConfirm({
+            title: `Start "${plan.label}"?`,
+            message: `${plan.duration_weeks} weeks. Approximately ${plan.expected_workouts_per_week} sessions/week. Your home screen will show today's prescribed workout each day. You can abandon the plan at any time.`,
+            confirmLabel: 'START PLAN',
+            cancelLabel: 'CANCEL'
+          });
+          if (!ok) return;
+          const fresh = new PlanState();
+          fresh.start(id);
+          savePlanState(fresh);
+          toast(`Started ${plan.label}`, 'success');
+          closePlansSheet();
+          // Re-render home to pick up the new state
+          navigate('#/home');
+        });
+        listEl.appendChild(card);
+      }
+    }
+  }
+
+  // Skip + abandon handlers (live on the sheet).
+  plansSheet.querySelector('#plans-skip-day').addEventListener('click', async () => {
+    const ok = await showConfirm({
+      title: 'Skip today\'s workout?',
+      message: 'The plan will advance by one day. Use this for unavoidable misses (illness, travel). Skipping repeatedly defeats the purpose of a plan.',
+      confirmLabel: 'SKIP',
+      cancelLabel: 'CANCEL'
+    });
+    if (!ok) return;
+    const ps = loadPlanState();
+    ps.skip('user_skipped_from_sheet');
+    savePlanState(ps);
+    toast('Day skipped', 'info');
+    closePlansSheet();
+    navigate('#/home');
+  });
+  plansSheet.querySelector('#plans-abandon').addEventListener('click', async () => {
+    const ok = await showConfirm({
+      title: 'Abandon plan?',
+      message: 'Your progress will be cleared. You can start a new plan anytime.',
+      confirmLabel: 'ABANDON',
+      cancelLabel: 'KEEP PLAN',
+      danger: true
+    });
+    if (!ok) return;
+    const ps = loadPlanState();
+    ps.reset();
+    savePlanState(ps);
+    toast('Plan abandoned', 'info');
+    closePlansSheet();
+    navigate('#/home');
+  });
 
   const linkHistory = node.querySelector('#link-history');
   if (linkHistory) linkHistory.addEventListener('click', () => navigate('#/history'));
@@ -6011,6 +6809,15 @@ function renderSummary(root) {
     record.notes = node.querySelector('#summary-notes').value || '';
     if (selectedRpe != null) record.rpe = selectedRpe;
     Workouts.save(record);
+    // F-PLAN composition: advance the plan if one is active. We pass the
+    // saved record's id so the plan can reference back to which workout
+    // completed each day. P12's complete() is one-shot per day, so
+    // accidental double-saves don't double-advance.
+    const planState = loadPlanState();
+    if (planState.isActive()) {
+      planState.complete({ recordId: record.id });
+      savePlanState(planState);
+    }
     Storage.remove(DRAFT_KEY);
     window.__liveWorkout = null;
     if (window.__lockScreen) { window.__lockScreen.stop(); window.__lockScreen = null; }
@@ -6032,6 +6839,32 @@ function renderSummary(root) {
     toast('Discarded', 'danger');
     navigate('#/home');
   });
+  // F-DIAG: diagnostics export per COMPOSITION_REGISTRY.md §6.
+  // C-PERSIST composition: workout state → JSON.stringify → Blob → download.
+  const diagBtn = node.querySelector('#summary-diag');
+  if (diagBtn) {
+    diagBtn.addEventListener('click', () => {
+      try {
+        const diag = live.toDiagnosticsExport();
+        const json = JSON.stringify(diag, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const stamp = new Date(record.startedAt).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        a.download = `ruckops-diagnostics-${stamp}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Revoke URL after the browser has had time to start the download
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        toast('Diagnostics downloaded', 'success');
+      } catch (e) {
+        console.warn('Diagnostics export failed', e);
+        toast('Export failed: ' + (e.message || 'unknown error'), 'danger');
+      }
+    });
+  }
 }
 
 function drawRouteMap(wrap, points) {

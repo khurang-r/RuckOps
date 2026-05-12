@@ -18,7 +18,7 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css?v=20260511j" />
+  <link rel="stylesheet" href="styles.css?v=20260512a" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet" />
 </head>
@@ -147,7 +147,9 @@
 
       <!-- Recommended workout — the WOD. Renders as a hero card with a
            ONE-TAP ACCEPT button, plus a small "freestyle" link for full
-           custom flow. Updated by renderHome based on profile + history. -->
+           custom flow. Updated by renderHome based on profile + history.
+           When a coaching plan is active, the WOD card shows the plan's
+           prescribed workout for today (F-PLAN composition). -->
       <button class="wod-card" id="start-workout">
         <span class="wod-tag" id="wod-tag">TODAY</span>
         <span class="wod-label" id="wod-label">START WORKOUT</span>
@@ -155,6 +157,21 @@
         <span class="wod-action" id="wod-action">START →</span>
       </button>
       <button class="link-btn freestyle-btn" id="freestyle-link">or freestyle (custom workout) →</button>
+
+      <!-- Active plan progress (F-PLAN). Only rendered when a plan is active. -->
+      <section class="plan-progress-card hidden" id="plan-progress-card">
+        <div class="panel-row">
+          <h3 class="panel-title" id="plan-progress-title">PLAN</h3>
+          <button class="link-btn" id="open-plans-sheet">Manage →</button>
+        </div>
+        <div class="plan-progress-row">
+          <div class="plan-progress-bar"><div class="plan-progress-fill" id="plan-progress-fill"></div></div>
+        </div>
+        <p class="muted small" id="plan-progress-detail">—</p>
+      </section>
+
+      <!-- "Start a plan" CTA when no plan is active -->
+      <button class="link-btn plans-link" id="open-plans-link">+ Start a coaching plan</button>
 
       <section class="panel compact-panel">
         <div class="panel-row">
@@ -173,6 +190,38 @@
         <a href="#/history" class="tab">HISTORY</a>
         <a href="#/profile" class="tab">PROFILE</a>
       </nav>
+
+      <!-- Coaching plans sheet — F-PLAN UI per registry §6.
+           Lets the user start a plan, see details + citation, or abandon
+           an active plan. Plans are evidence-cited content. -->
+      <div class="sheet hidden" id="sheet-plans" aria-hidden="true">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>COACHING PLANS</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <!-- Active plan summary (when plan is in progress) -->
+            <div id="plans-active-section" class="hidden">
+              <div class="plan-active-summary">
+                <span class="plan-active-label" id="plans-active-label">—</span>
+                <p class="muted small" id="plans-active-detail">—</p>
+                <p class="plan-citation muted small" id="plans-active-citation">—</p>
+              </div>
+              <button class="btn btn-outline" id="plans-skip-day">SKIP TODAY</button>
+              <button class="btn btn-text" id="plans-abandon">ABANDON PLAN</button>
+            </div>
+
+            <!-- Plan picker (when no plan is active) -->
+            <div id="plans-picker-section">
+              <p class="muted small">Each plan is built on published training methodology. Citations shown for each. Plans modify the home-screen workout-of-the-day; rest days are respected. High acute load (ACWR &gt; 1.5) will defer a prescribed hard session by one day.</p>
+              <div class="plans-list" id="plans-list">
+                <!-- Populated dynamically -->
+              </div>
+              <p class="muted tiny">⚠ Plans are not medical advice. They are structured training schedules drawn from public literature. Talk to a physician before starting any new program if you have health concerns.</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
   </template>
 
@@ -630,6 +679,13 @@
         <button class="btn btn-text" id="summary-discard">DISCARD</button>
         <button class="btn btn-primary" id="summary-save">SAVE</button>
       </div>
+      <!-- Diagnostics export: F-DIAG per COMPOSITION_REGISTRY.md §6.
+           For debugging cross-device issues (lock-screen, sensor failures).
+           Downloads a JSON file with filter stats, mode transitions,
+           sensor health, and the full workout record. -->
+      <div class="diag-row">
+        <button class="btn btn-text small" id="summary-diag" title="Download workout diagnostics for debugging">EXPORT DIAGNOSTICS</button>
+      </div>
     </main>
   </template>
 
@@ -706,7 +762,7 @@
         <span class="tile-value" id="tile-storage-val">0 workouts · local only</span>
       </button>
 
-      <p class="muted small version-line">v1.2 · 2026-05-11j · web MVP · <a href="#" id="about-link">about</a></p>
+      <p class="muted small version-line">v1.3 · 2026-05-12a · web MVP · <a href="#" id="about-link">about</a></p>
 
       <nav class="tabbar">
         <a href="#/home" class="tab">HOME</a>
@@ -840,6 +896,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="app.js?v=20260511j" type="module"></script>
+  <script src="app.js?v=20260512a" type="module"></script>
 </body>
 </html>
