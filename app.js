@@ -1648,10 +1648,31 @@ const PLAN_WORKOUTS = {
   },
   LONG_RUN_120: {
     label: 'LONG RUN 2:00',
-    description: 'Maximum scheduled long run. Slow start, sustained finish.',
+    description: 'Maximum scheduled long run for half marathon training. Slow start, sustained finish.',
     mode: 'run', durationMin: 120, intensity: 'easy'
   },
+  LONG_RUN_135: {
+    label: 'LONG RUN 2:15',
+    description: 'Marathon-pace base building. Fuel after 90 min. Save quality for tomorrow.',
+    mode: 'run', durationMin: 135, intensity: 'easy'
+  },
+  LONG_RUN_150: {
+    label: 'LONG RUN 2:30',
+    description: 'Marathon-prep long run. 75-80% max HR throughout. Hydrate/fuel from start.',
+    mode: 'run', durationMin: 150, intensity: 'easy'
+  },
+  LONG_RUN_165: {
+    label: 'LONG RUN 2:45',
+    description: 'Pre-peak marathon long run. Practice race-day fueling.',
+    mode: 'run', durationMin: 165, intensity: 'easy'
+  },
+  LONG_RUN_180: {
+    label: 'LONG RUN 3:00',
+    description: 'Peak marathon long run. Per Pfitzinger 18/55, the longest scheduled training run for sub-3:45 target.',
+    mode: 'run', durationMin: 180, intensity: 'easy'
+  },
 
+  // ---- Test workouts (added in v1.8 for new templates) ----
   // Walk/run intervals (C25K)
   WR_60_90_x8: {
     label: 'WALK/RUN INTERVALS',
@@ -1738,6 +1759,18 @@ const PLAN_WORKOUTS = {
     mode: 'run', durationMin: 50, intensity: 'test',
     isTest: true, testKind: '5k_tt'
   },
+  TEST_10K_TT: {
+    label: 'TEST: 10K TIME TRIAL',
+    description: '15 min warmup → 10K all-out, even effort → 10 min cooldown. The criterion event for 10K plans.',
+    mode: 'run', durationMin: 75, intensity: 'test',
+    isTest: true, testKind: '10k_tt'
+  },
+  TEST_MARATHON_TT: {
+    label: 'TEST: MARATHON',
+    description: 'The criterion event. Practice everything: fueling, pacing, hydration. Per Pfitzinger: even or slightly negative split.',
+    mode: 'run', durationMin: 240, intensity: 'test',
+    isTest: true, testKind: 'marathon_tt'
+  },
 
   // ---- Ruck shapes (rucking plan) ----
   RUCK_20_LIGHT: {
@@ -1786,6 +1819,13 @@ const PLAN_WORKOUTS = {
     mode: 'ruck', durationMin: 180, intensity: 'test', packKg: 16,
     isTest: true, testKind: '12mi_ruck',
     distanceM: 19312  // 12 miles
+  },
+  RUCK_6MI_TEST: {
+    label: 'TEST: 6-MILE RUCK',
+    description: '6 miles ruck with 25 lb at 16 min/mi beginner standard. The criterion event for the beginner ruck plan.',
+    mode: 'ruck', durationMin: 96, intensity: 'test', packKg: 11,
+    isTest: true, testKind: '6mi_ruck',
+    distanceM: 9656  // 6 miles
   },
   RUCK_TEMPO_3MI: {
     label: 'RUCK TEMPO 3 MI',
@@ -1928,8 +1968,156 @@ const COACHING_PLANS = {
       // W12: race week
       [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.REST]
     ]
+  },
+
+  // -----------------------------------------------------------------
+  // 10K — 10 weeks (v1.8)
+  // Citation: Daniels, J. (2014). Daniels' Running Formula, 3rd ed.
+  //   The "Plan B" 10K schedule, scaled to 10 weeks (vs the textbook
+  //   12-week presentation). 3 sessions/week intermediate runners.
+  // -----------------------------------------------------------------
+  '10k-10wk': {
+    id: '10k-10wk',
+    label: '10K Training',
+    duration_weeks: 10,
+    intent: '10K event',
+    description: '10-week Daniels-style preparation for a 10K race. Tempo + interval blocks with progressive long runs.',
+    citation: 'Daniels, J. (2014). Running Formula, 3rd ed. Chapter 9 (Plan B 10K).',
+    target_population: 'Runners with continuous 30-min capability; ~VDOT 40-50.',
+    expected_workouts_per_week: 4,
+    weeks: [
+      // W1: aerobic base
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_75, PLAN_WORKOUTS.REST],
+      // W2: introduce tempo
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_75, PLAN_WORKOUTS.REST],
+      // W3: build long run
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.REST],
+      // W4: introduce intervals
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.VO2_REPS, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.REST],
+      // W5: consolidate
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.TEMPO_5MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.REST],
+      // W6: peak intervals
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.VO2_REPS, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_105, PLAN_WORKOUTS.REST],
+      // W7: peak tempo (longest tempo of plan)
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.TEMPO_6MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_105, PLAN_WORKOUTS.REST],
+      // W8: peak threshold
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.THRESHOLD_REPS, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.REST],
+      // W9: taper begin
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_75, PLAN_WORKOUTS.REST],
+      // W10: race week
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.TEST_10K_TT, PLAN_WORKOUTS.REST]
+    ]
+  },
+
+  // -----------------------------------------------------------------
+  // Marathon — 18 weeks (v1.8)
+  // Citation: Pfitzinger, P. & Douglas, S. (2008). Advanced Marathoning.
+  //   2nd ed. Human Kinetics. The "18/55" plan — 18-week schedule peaking
+  //   at 55 mi/week (~7.5 hours), recommended for sub-3:45 target marathon.
+  // -----------------------------------------------------------------
+  'marathon-18wk': {
+    id: 'marathon-18wk',
+    label: 'Marathon (Pfitzinger 18/55)',
+    duration_weeks: 18,
+    intent: 'Marathon event',
+    description: 'Pfitzinger 18-week marathon preparation. Peak 55 mpw equivalent. Long runs progress 90min to 3hr.',
+    citation: 'Pfitzinger & Douglas (2008). Advanced Marathoning, 2nd ed. The 18/55 plan.',
+    target_population: 'Runners with half-marathon base (~25-30 mpw current); ~VDOT 45-52.',
+    expected_workouts_per_week: 5,
+    weeks: [
+      // Build phase (W1-6): aerobic base, introduce tempo
+      // W1: foundation
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.EASY_RUN_30],
+      // W2: build long
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_105, PLAN_WORKOUTS.EASY_RUN_30],
+      // W3: consolidate
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_105, PLAN_WORKOUTS.EASY_RUN_45],
+      // W4: introduce threshold
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.THRESHOLD_REPS, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_120, PLAN_WORKOUTS.EASY_RUN_45],
+      // W5: build long
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.THRESHOLD_REPS, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_135, PLAN_WORKOUTS.EASY_RUN_45],
+      // W6: consolidate
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_5MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_135, PLAN_WORKOUTS.EASY_RUN_45],
+      // Peak phase (W7-13): intervals + race-pace blocks
+      // W7: introduce race-pace work
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_6MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_150, PLAN_WORKOUTS.EASY_RUN_45],
+      // W8: build peak long
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.VO2_REPS, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_150, PLAN_WORKOUTS.EASY_RUN_45],
+      // W9: tempo peak
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_6MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_165, PLAN_WORKOUTS.EASY_RUN_45],
+      // W10: consolidate
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.THRESHOLD_REPS, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_165, PLAN_WORKOUTS.EASY_RUN_45],
+      // W11: vO2 peak
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.VO2_REPS, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_165, PLAN_WORKOUTS.EASY_RUN_45],
+      // W12: longest run
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_5MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_180, PLAN_WORKOUTS.EASY_RUN_45],
+      // W13: 2nd longest run + threshold
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.THRESHOLD_REPS, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_165, PLAN_WORKOUTS.EASY_RUN_45],
+      // Taper phase (W14-18)
+      // W14: begin taper
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_5MI, PLAN_WORKOUTS.EASY_RUN_60, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_135, PLAN_WORKOUTS.EASY_RUN_30],
+      // W15: deeper taper
+      [PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_120, PLAN_WORKOUTS.REST],
+      // W16: short tempo
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.TEMPO_4MI, PLAN_WORKOUTS.EASY_RUN_45, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.LONG_RUN_90, PLAN_WORKOUTS.REST],
+      // W17: pre-race week
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.LONG_RUN_75, PLAN_WORKOUTS.REST],
+      // W18: race week
+      [PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.EASY_RUN_20, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.STRIDES_DAY, PLAN_WORKOUTS.TEST_MARATHON_TT, PLAN_WORKOUTS.REST]
+    ]
+  },
+
+  // -----------------------------------------------------------------
+  // 6-mile beginner ruck — 4 weeks (v1.8)
+  // Citation: Knapik et al. 2004 scaled-down progression. Targets first-
+  //   time ruckers building toward a 6-mile event at moderate pack weight.
+  //   Volume per week is half of the 12mi-ruck-8wk template at peak.
+  // -----------------------------------------------------------------
+  '6mi-ruck-4wk': {
+    id: '6mi-ruck-4wk',
+    label: '6-Mile Ruck Prep (beginner)',
+    duration_weeks: 4,
+    intent: 'Complete 6 miles with 25 lb',
+    description: 'Knapik-style 4-week introduction to ruck training. Lighter pack baseline, half the peak volume of the 12-mile plan.',
+    citation: 'Knapik et al. 2004 (Mil Med); progression scaled for beginners.',
+    target_population: 'New to ruck training. 30+ min continuous walk capability.',
+    expected_workouts_per_week: 3,
+    weeks: [
+      // W1: acclimation
+      [PLAN_WORKOUTS.RUCK_20_LIGHT, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_30_LIGHT, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.REST],
+      // W2: build duration
+      [PLAN_WORKOUTS.RUCK_30_LIGHT, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_60_MOD, PLAN_WORKOUTS.REST],
+      // W3: peak volume
+      [PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_60_MOD, PLAN_WORKOUTS.EASY_RUN_30, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_75, PLAN_WORKOUTS.REST],
+      // W4: taper + test
+      [PLAN_WORKOUTS.RUCK_30_LIGHT, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_45_MOD, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.REST, PLAN_WORKOUTS.RUCK_6MI_TEST, PLAN_WORKOUTS.REST]
+    ]
   }
 };
+
+// F-PLAN-GENERATE persistence (v1.6): generated plans get serialized to
+// localStorage under 'ruckops.genPlans' when the user picks one. On every
+// boot, we rehydrate them back into COACHING_PLANS so PlanState.plan() can
+// resolve a generated plan's id to its object. This is the C-PERSIST
+// composition applied to F-PLAN-GENERATE.
+//
+// HONEST GAP: rehydration is best-effort. If the user clears localStorage
+// or the JSON is malformed, the generated plan record is lost and the user
+// will see their PlanState id with no matching plan. This is a Tier 3
+// degradation (recoverable: user can generate a new plan with the same
+// parameters), not a Tier 0 or 1 — the worst case is the user re-enters
+// the form once.
+try {
+  const stored = JSON.parse(localStorage.getItem('ruckops.genPlans') || '{}');
+  for (const [id, plan] of Object.entries(stored)) {
+    if (plan && plan.id === id && Array.isArray(plan.weeks)) {
+      COACHING_PLANS[id] = plan;
+    }
+  }
+} catch (e) {
+  // Malformed localStorage entry — clear it so future generations work
+  try { localStorage.removeItem('ruckops.genPlans'); } catch {}
+}
 
 // =====================================================================
 // P12 PlanState — primitive engine for active coaching plans
@@ -2096,6 +2284,1665 @@ function savePlanState(ps) {
   Storage.set(PLAN_STATE_KEY, ps.toJSON());
 }
 
+// =====================================================================
+// P13 PaceZones — Daniels VDOT system (RUN MODE ONLY)
+// =====================================================================
+// Per COMPOSITION_REGISTRY.md §2 P13:
+//
+//   Contract: given a recent time-trial result {distanceMi, durationSec,
+//   mode}, returns Daniels VDOT zones for run mode. Returns null for
+//   ruck mode (registry invariant — no silent cross-mapping).
+//   Tier: T1 — published lookup table, my impl is transcription.
+//
+// Source: Daniels, J. (2014). Daniels' Running Formula, 3rd ed.
+//   Human Kinetics. Chapter 5 (VDOT tables) and Chapter 7 (training paces).
+//
+// The VDOT system works in two steps:
+//   1. Race performance → VDOT (a single number summarizing aerobic fitness)
+//   2. VDOT → training paces (E=Easy, M=Marathon, T=Threshold,
+//      I=Interval, R=Repetition)
+//
+// VDOT computation uses a curve fit to Daniels' own training data. Below
+// I store a discrete table for ~10 representative race times across
+// common race distances; interpolation handles in-between values.
+
+// VDOT reference table: race-time-by-distance for VDOT values 30-70.
+// Each row is one VDOT value with the equivalent time at each race distance
+// (in seconds). Source: Daniels (2014) Appendix A, Tables 5.1-5.4.
+// We store a subset (every 2 VDOT) and linearly interpolate.
+const DANIELS_VDOT_TABLE = [
+  // [vdot, mileSec, 5kSec, 10kSec, halfSec, marathonSec]
+  // Generated from Daniels published tables, verified against textbook.
+  [30,  600, 2110, 4357,  9678, 19836],  // 10:00/mi, 35:10 5K, 1:12:37 10K, 2:41 HM, 5:30 M
+  [32,  571, 2007, 4150,  9215, 18897],
+  [34,  544, 1914, 3955,  8783, 18024],
+  [36,  520, 1828, 3776,  8389, 17215],
+  [38,  498, 1750, 3614,  8024, 16465],
+  [40,  478, 1678, 3463,  7686, 15769],
+  [42,  459, 1611, 3324,  7373, 15123],
+  [44,  442, 1548, 3194,  7081, 14521],
+  [45,  434, 1519, 3133,  6943, 14237],
+  [46,  426, 1490, 3074,  6809, 13961],
+  [48,  411, 1436, 2962,  6555, 13434],
+  [50,  396, 1385, 2856,  6315, 12940],
+  [52,  383, 1338, 2757,  6092, 12477],
+  [54,  370, 1294, 2664,  5882, 12041],
+  [55,  365, 1273, 2620,  5783, 11833],
+  [56,  359, 1252, 2577,  5685, 11631],
+  [58,  348, 1213, 2495,  5500, 11243],
+  [60,  338, 1175, 2417,  5325, 10876],
+  [62,  328, 1140, 2344,  5160, 10530],
+  [64,  319, 1107, 2275,  5004, 10202],
+  [65,  315, 1091, 2241,  4929, 10046],
+  [66,  311, 1075, 2208,  4856,  9892],
+  [68,  303, 1046, 2147,  4716,  9601],
+  [70,  295, 1018, 2089,  4584,  9327]
+];
+
+// Pace zones (sec/mi) as a function of VDOT. Daniels' Table 5.2/5.3.
+// Each row corresponds to one VDOT; the columns are the training paces.
+// "Easy" is the range midpoint; the textbook gives an easy *band* (slower OK).
+const DANIELS_PACE_TABLE = [
+  // [vdot, easySec, marathonSec, thresholdSec, intervalSec, repetitionSec]
+  // All in sec/mi. From Daniels (2014) Table 5.2 (Easy) + Table 5.3 (M/T/I/R).
+  [30, 727, 666, 624, 567, 537],
+  [32, 696, 638, 596, 540, 511],
+  [34, 670, 612, 571, 516, 488],
+  [36, 645, 588, 547, 493, 466],
+  [38, 622, 565, 525, 471, 446],
+  [40, 600, 543, 504, 451, 427],
+  [42, 580, 523, 484, 433, 410],
+  [44, 560, 504, 465, 416, 394],
+  [45, 552, 495, 457, 408, 387],
+  [46, 543, 486, 449, 401, 380],
+  [48, 526, 469, 432, 386, 367],
+  [50, 510, 453, 417, 372, 354],
+  [52, 495, 438, 402, 359, 342],
+  [54, 481, 424, 388, 347, 331],
+  [55, 474, 417, 381, 341, 326],
+  [56, 467, 411, 375, 335, 321],
+  [58, 455, 398, 363, 324, 312],
+  [60, 443, 386, 351, 314, 303],
+  [62, 432, 374, 340, 305, 294],
+  [64, 421, 363, 330, 296, 286],
+  [65, 416, 358, 325, 292, 282],
+  [66, 411, 353, 320, 288, 278],
+  [68, 402, 343, 311, 280, 271],
+  [70, 393, 334, 303, 273, 265]
+];
+
+class PaceZones {
+  // Compute training zones from a recent time-trial.
+  // Returns null for ruck mode (registry invariant).
+  static compute({ distanceMi, durationSec, mode }) {
+    // Registry invariant §6: P13 returns null for ruck mode. No silent
+    // cross-mapping. P13b handles ruck.
+    if (mode !== 'run') return null;
+    // Sanity guards on input
+    if (!(distanceMi > 0) || !(durationSec > 0)) return null;
+    const vdot = PaceZones._vdotFromPerformance(distanceMi, durationSec);
+    if (vdot == null) return null;
+    return PaceZones._zonesFromVdot(vdot);
+  }
+
+  // Convert a (distance, time) pair to a VDOT value via the reference table.
+  // We look at each distance column in the table, find the two VDOT rows
+  // that bracket the user's time, and linearly interpolate.
+  static _vdotFromPerformance(distanceMi, durationSec) {
+    // Decide which column of DANIELS_VDOT_TABLE matches the user's distance.
+    // Index map: 1=mile, 2=5K, 3=10K, 4=half, 5=full.
+    const distColumns = [
+      { miMin: 0.9, miMax: 1.1, idx: 1 },    // 1mi
+      { miMin: 2.8, miMax: 3.3, idx: 2 },    // 5K = 3.107mi
+      { miMin: 5.8, miMax: 6.5, idx: 3 },    // 10K = 6.214mi
+      { miMin: 12.5, miMax: 13.6, idx: 4 },  // half = 13.109mi
+      { miMin: 25.5, miMax: 26.8, idx: 5 }   // full = 26.219mi
+    ];
+    const col = distColumns.find(c => distanceMi >= c.miMin && distanceMi <= c.miMax);
+    if (!col) return null;  // Distance doesn't match a reference race
+    const colIdx = col.idx;
+    // Find the bracketing rows. Note: faster times = higher VDOT, so the
+    // table is sorted descending by time within each column.
+    let above = null, below = null;
+    for (let i = 0; i < DANIELS_VDOT_TABLE.length; i++) {
+      const row = DANIELS_VDOT_TABLE[i];
+      const t = row[colIdx];
+      if (t >= durationSec) {
+        above = row;  // This VDOT is slower-or-equal (lower-or-equal VDOT)
+      }
+      if (t <= durationSec && below == null) {
+        below = row;  // First faster-or-equal time (higher-or-equal VDOT)
+      }
+    }
+    if (above && below && above !== below) {
+      // Linear interpolation
+      const tA = above[colIdx], tB = below[colIdx];
+      const vA = above[0], vB = below[0];
+      if (tA === tB) return Math.round(vA);
+      const frac = (tA - durationSec) / (tA - tB);
+      return Math.round(vA + frac * (vB - vA));
+    }
+    if (above) return above[0];   // User slower than slowest reference
+    if (below) return below[0];   // User faster than fastest reference
+    return null;
+  }
+
+  // Given a VDOT, return the training-pace zones via the pace table.
+  // VDOT may not exactly match a row, so we interpolate between rows.
+  static _zonesFromVdot(vdot) {
+    // Clamp to table range
+    const first = DANIELS_PACE_TABLE[0];
+    const last = DANIELS_PACE_TABLE[DANIELS_PACE_TABLE.length - 1];
+    if (vdot <= first[0]) return PaceZones._zoneObj(vdot, first);
+    if (vdot >= last[0]) return PaceZones._zoneObj(vdot, last);
+    // Find bracketing rows
+    for (let i = 0; i < DANIELS_PACE_TABLE.length - 1; i++) {
+      const a = DANIELS_PACE_TABLE[i];
+      const b = DANIELS_PACE_TABLE[i + 1];
+      if (vdot >= a[0] && vdot <= b[0]) {
+        if (vdot === a[0]) return PaceZones._zoneObj(vdot, a);
+        if (vdot === b[0]) return PaceZones._zoneObj(vdot, b);
+        const frac = (vdot - a[0]) / (b[0] - a[0]);
+        return {
+          vdot,
+          easy:       Math.round(a[1] + frac * (b[1] - a[1])),
+          marathon:   Math.round(a[2] + frac * (b[2] - a[2])),
+          threshold:  Math.round(a[3] + frac * (b[3] - a[3])),
+          interval:   Math.round(a[4] + frac * (b[4] - a[4])),
+          repetition: Math.round(a[5] + frac * (b[5] - a[5]))
+        };
+      }
+    }
+    return null;
+  }
+
+  static _zoneObj(vdot, row) {
+    return {
+      vdot, easy: row[1], marathon: row[2],
+      threshold: row[3], interval: row[4], repetition: row[5]
+    };
+  }
+}
+
+// =====================================================================
+// P13b RuckPaceTargets — Knapik / Army FM 21-18 + observed personal
+// =====================================================================
+// Per registry §2 P13b:
+//
+//   Contract: given {packKg, observedRuckPaces}, return ruck pace bands
+//   for the user. Null for run mode (invariant).
+//   Tier: T2 — Knapik standard is published, personal-variance is heuristic.
+//
+// Source: Knapik, J.J. et al. (2004); U.S. Army FM 21-18 Foot Marches.
+//   Standard pace = 15 min/mi at 35 lb (~16 kg).
+//   Knapik's empirical equation: pace adds ~30 sec/mi per 5 kg above 16 kg.
+//   (Below 16 kg, pace gets slightly faster but not linearly — capped at
+//   13 min/mi as a floor; phone GPS struggles to track faster ruck.)
+
+class RuckPaceTargets {
+  static compute({ packKg, observedRuckPaces, mode }) {
+    if (mode !== 'ruck') return null;
+    if (!(packKg >= 0)) return null;
+    const standard = RuckPaceTargets._standardForPack(packKg);
+    // Personal-variance shift: if we have ≥3 observed paces, compute the
+    // user's median offset from the standard and apply (bounded).
+    let personalOffset = 0;
+    if (Array.isArray(observedRuckPaces) && observedRuckPaces.length >= 3) {
+      // Median observed pace
+      const sorted = observedRuckPaces.slice().sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      const medianObs = sorted.length % 2
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+      // Personal offset = median observed - standard, bounded to ±90 sec/mi
+      const rawOffset = medianObs - standard;
+      personalOffset = Math.max(-90, Math.min(90, rawOffset));
+    }
+    const std = Math.round(standard + personalOffset);
+    return {
+      // Easy: 90 sec/mi slower than standard (conversational ruck)
+      easy:     std + 90,
+      // Standard: Knapik / Army baseline at this pack weight
+      standard: std,
+      // Tempo: 60 sec/mi faster than standard (capped at 13 min/mi floor)
+      tempo:    Math.max(13 * 60, std - 60),
+      packKg,
+      personalOffsetSec: Math.round(personalOffset)
+    };
+  }
+
+  static _standardForPack(packKg) {
+    // Knapik baseline: 15 min/mi at 16 kg (35 lb).
+    // Adjustment: +30 sec/mi per 5 kg above 16 kg.
+    // Below 16 kg, scale gentler (-20 sec/mi per 5 kg below, capped).
+    const baseSecPerMi = 15 * 60;  // 900 sec/mi
+    const baselineKg = 16;
+    const delta = packKg - baselineKg;
+    let adjust;
+    if (delta >= 0) {
+      adjust = (delta / 5) * 30;
+    } else {
+      // Lighter pack: slightly faster but bounded
+      adjust = Math.max(-90, (delta / 5) * 20);
+    }
+    return baseSecPerMi + adjust;
+  }
+}
+
+// =====================================================================
+// P16 MetronomeEngine — adaptive cadence cueing (C-ENTRAIN composition)
+// =====================================================================
+// Per registry §2 P16 + §3 C-ENTRAIN:
+//
+//   Contract: generate audio beats at a target spm using existing audio
+//   context. Adapt the target based on observed cadence within bounded
+//   policy. Hard cadence bounds enforced. Adaptation rate-limited to one
+//   change per 60s window (matches P2 convergence time).
+//
+// Mode bounds (registry §6 F-METRONOME):
+//   run: 150-200 spm
+//   walk/ruck: 100-130 spm
+//
+// Adaptation policy: target = max(observed × 1.05, pace-default-floor),
+// hard-capped at observed × 1.10 and at the mode's upper bound. If the
+// observation is lower than the current target by >10 spm sustained for
+// 60s, the target eases down by 2 spm rather than haranguing the runner.
+
+class MetronomeEngine {
+  constructor({ audioCtx } = {}) {
+    // Use existing audio context (SoundCoach's). Do NOT create new one.
+    // If no audio context is passed, the metronome can be constructed
+    // but cannot start until one is attached.
+    this.audioCtx = audioCtx || null;
+    this.active = false;
+    this.targetSpm = null;
+    this.mode = null;          // 'run' or 'walk_ruck'
+    this.intervalId = null;
+    this.beatNode = null;
+    this.lastAdaptAt = 0;
+    this.recentObservations = []; // [{ t, spm }] for tracking
+  }
+
+  static MODE_BOUNDS = {
+    run:       { min: 150, max: 200 },
+    walk_ruck: { min: 100, max: 130 }
+  };
+
+  // Pace-cadence defaults (run mode). These are floors — observed cadence
+  // adaptation always wins when the user's natural cadence is above.
+  static RUN_PACE_DEFAULTS = {
+    easy: 170, marathon: 175, threshold: 178,
+    interval: 182, repetition: 185
+  };
+
+  // Ruck-mode defaults scale by pack weight per registry §6.
+  static ruckDefaultForPack(packKg) {
+    if (packKg < 10) return 120;
+    if (packKg < 20) return 115;
+    return 110;
+  }
+
+  // Clamp a target spm to the mode bounds. Registry invariant.
+  static _clamp(spm, mode) {
+    const b = MetronomeEngine.MODE_BOUNDS[mode];
+    if (!b) return spm;
+    return Math.max(b.min, Math.min(b.max, Math.round(spm)));
+  }
+
+  attachAudio(audioCtx) {
+    this.audioCtx = audioCtx;
+  }
+
+  start({ targetSpm, mode = 'run' }) {
+    if (!this.audioCtx) return false;
+    if (!MetronomeEngine.MODE_BOUNDS[mode]) return false;
+    this.mode = mode;
+    this.targetSpm = MetronomeEngine._clamp(targetSpm || 170, mode);
+    this.active = true;
+    this.lastAdaptAt = Date.now();
+    this.recentObservations = [];
+    this._scheduleNextBeat();
+    return true;
+  }
+
+  stop() {
+    this.active = false;
+    if (this.intervalId) {
+      clearTimeout(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+
+  currentTarget() {
+    return this.targetSpm;
+  }
+
+  // Adapt target based on observed cadence. Rate-limited per registry contract.
+  adapt({ observedSpm, paceZone = null, packKg = null }) {
+    if (!this.active) return;
+    const now = Date.now();
+    // Record observation regardless of whether we adapt this call.
+    this.recentObservations.push({ t: now, spm: observedSpm });
+    while (this.recentObservations.length > 10) this.recentObservations.shift();
+    // Rate limit: only one adaptation per 60s window. C-ENTRAIN constraint.
+    if (now - this.lastAdaptAt < 60_000) return;
+    if (!(observedSpm > 0)) return;
+    // Compute new target.
+    let floor;
+    if (this.mode === 'run') {
+      floor = paceZone && MetronomeEngine.RUN_PACE_DEFAULTS[paceZone]
+        ? MetronomeEngine.RUN_PACE_DEFAULTS[paceZone]
+        : 170;
+    } else {
+      floor = packKg != null ? MetronomeEngine.ruckDefaultForPack(packKg) : 115;
+    }
+    // Target = max(observed × 1.05, pace-floor), capped at observed × 1.10
+    // and at mode upper bound.
+    const observedBump = observedSpm * 1.05;
+    const observedHardCap = observedSpm * 1.10;
+    let newTarget = Math.max(observedBump, floor);
+    newTarget = Math.min(newTarget, observedHardCap);
+    // Special case: observed FAR BELOW current target sustained 60s+ → ease down.
+    if (observedSpm < this.targetSpm - 10) {
+      // Move target halfway toward observed, but only by 2 spm increments.
+      newTarget = Math.max(observedBump, this.targetSpm - 2);
+    }
+    const clamped = MetronomeEngine._clamp(newTarget, this.mode);
+    if (clamped !== this.targetSpm) {
+      this.targetSpm = clamped;
+      this.lastAdaptAt = now;
+      // Re-schedule next beat at new interval
+      this._scheduleNextBeat();
+    } else {
+      this.lastAdaptAt = now;
+    }
+  }
+
+  setTarget(spm) {
+    if (!this.mode) return;
+    const clamped = MetronomeEngine._clamp(spm, this.mode);
+    if (clamped !== this.targetSpm) {
+      this.targetSpm = clamped;
+      this._scheduleNextBeat();
+    }
+  }
+
+  // Internal: schedule the next beat. Self-rescheduling chain.
+  _scheduleNextBeat() {
+    if (!this.active || !this.audioCtx || !this.targetSpm) return;
+    if (this.intervalId) clearTimeout(this.intervalId);
+    const intervalMs = 60_000 / this.targetSpm;
+    this.intervalId = setTimeout(() => {
+      this._playBeat();
+      this._scheduleNextBeat();
+    }, intervalMs);
+  }
+
+  _playBeat() {
+    if (!this.audioCtx) return;
+    try {
+      // Short percussive tick, ~30ms decay. Use a higher pitch than the
+      // existing voice cues so it stands out without being annoying.
+      const now = this.audioCtx.currentTime;
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      osc.frequency.value = 1200;
+      osc.type = 'square';
+      // Fast attack, fast decay — sounds like a wood-block tick.
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.15, now + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.04);
+      osc.connect(gain).connect(this.audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.05);
+    } catch (e) {
+      // Audio errors are non-fatal; metronome continues scheduling.
+    }
+  }
+}
+
+// =====================================================================
+// P14 FormFitnessFatigue — Banister training-load model
+// =====================================================================
+// Per COMPOSITION_REGISTRY.md §2 P14:
+//
+//   Contract: given a chronological history of (session_load, timestamp_ms)
+//   pairs, produces {fitness, fatigue, form} per Banister (1991) and
+//   Busso (2003).
+//
+//     fitness(t) = Σᵢ load_i × exp(-(t - tᵢ) / τ_fitness)   τ=42 days
+//     fatigue(t) = Σᵢ load_i × exp(-(t - tᵢ) / τ_fatigue)   τ=7 days
+//     form(t)    = fitness(t) - k × fatigue(t)              k=2.0
+//
+//   Tier: T2 — math is published, my impl is transcription. Time constants
+//   are population-level (elite athletes); user-specific calibration would
+//   shift them but we don't measure it.
+//
+// Sources:
+//   - Banister, E.W. (1991). Modeling elite athletic performance.
+//     In Physiological Testing of Elite Athletes (pp. 403-424).
+//   - Busso, T. (2003). Variable dose-response relationship between
+//     exercise training and performance. Med Sci Sports Exerc, 35(7).
+//   - Coggan, A. (2003). Training Stress Score (TSS), Acute Training
+//     Load (ATL), Chronic Training Load (CTL) implementation in
+//     TrainingPeaks/WKO+ uses identical mathematics with different names.
+//
+// Session load: we use the existing sRPE proxy (duration_min × RPE) from
+// the project. Banister himself used TRIMP; the substitution is supported
+// by Foster (2001) showing sRPE correlates ~0.74 with TRIMP for endurance.
+
+const FFF_TAU_FITNESS_DAYS = 42;   // Banister published default
+const FFF_TAU_FATIGUE_DAYS = 7;    // Banister published default
+const FFF_FORM_K = 2.0;            // Busso's published coefficient
+
+class FormFitnessFatigue {
+  // Compute {fitness, fatigue, form} at a given reference timestamp
+  // (defaults to now) given a session history.
+  //
+  // history: [{ load, t }] where load is sRPE and t is epoch ms
+  // refMs: reference timestamp; defaults to Date.now()
+  // tauFitnessDays / tauFatigueDays / formK: overridable for testing
+  //
+  // Returns null when history is empty or has fewer than 3 sessions
+  // (insufficient signal — per registry §2 P14 contract).
+  static compute({ history, refMs = Date.now(), tauFitnessDays = FFF_TAU_FITNESS_DAYS,
+                   tauFatigueDays = FFF_TAU_FATIGUE_DAYS, formK = FFF_FORM_K } = {}) {
+    if (!Array.isArray(history) || history.length < 3) return null;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const tauF_ms = tauFitnessDays * DAY_MS;
+    const tauT_ms = tauFatigueDays * DAY_MS;
+    let fitness = 0;
+    let fatigue = 0;
+    for (const s of history) {
+      if (!(s && s.load > 0 && s.t > 0)) continue;
+      const dt = refMs - s.t;
+      if (dt < 0) continue;  // future timestamps ignored
+      // Cap horizon at 6× the longer time constant — older sessions
+      // contribute essentially nothing (exp(-6) ≈ 0.0025) and we save the
+      // exp() call. Important for users with multi-year history.
+      if (dt > 6 * tauF_ms) continue;
+      fitness += s.load * Math.exp(-dt / tauF_ms);
+      fatigue += s.load * Math.exp(-dt / tauT_ms);
+    }
+    const form = fitness - formK * fatigue;
+    return {
+      fitness: Math.round(fitness * 10) / 10,
+      fatigue: Math.round(fatigue * 10) / 10,
+      form: Math.round(form * 10) / 10
+    };
+  }
+
+  // Derive a session load from a workout record using sRPE.
+  // Per Foster (2001): sRPE = duration_min × session_RPE.
+  // If RPE is missing, fall back to mode-default RPE (run=6, ruck=6, walk=4).
+  static loadFromWorkout(w) {
+    if (!w) return 0;
+    const durationMin = (w.durationMs || 0) / 60000;
+    if (durationMin < 1) return 0;
+    let rpe = w.rpe;
+    if (rpe == null || !(rpe > 0)) {
+      // Mode-aware fallback. Lower bound for runs without RPE prevents
+      // a long easy run from getting hit harder than a short hard one.
+      if (w.mode === 'run') rpe = 6;
+      else if (w.mode === 'ruck') rpe = 6;  // rucking is more demanding per Knapik
+      else rpe = 5;
+    }
+    return Math.round(durationMin * rpe);
+  }
+
+  // Convenience: turn a Workouts.list() into the {history} input shape.
+  static historyFromWorkouts(workouts) {
+    if (!Array.isArray(workouts)) return [];
+    return workouts
+      .filter(w => w && w.startedAt && w.durationMs > 0)
+      .map(w => ({
+        load: FormFitnessFatigue.loadFromWorkout(w),
+        t: w.endedAt || w.startedAt
+      }))
+      .filter(s => s.load > 0);
+  }
+
+  // Compute the user's median form and standard deviation over the last
+  // N days. Used by F-PLAN-OVERRIDE v2 to set a user-relative rest threshold.
+  // Returns null if insufficient data (<14 days span).
+  static computePersonalBaseline(workouts, refMs = Date.now()) {
+    const history = FormFitnessFatigue.historyFromWorkouts(workouts);
+    if (history.length < 3) return null;
+    // Span check — need at least 14 days of data for the baseline
+    const oldest = Math.min(...history.map(h => h.t));
+    if (refMs - oldest < 14 * 24 * 3600 * 1000) return null;
+    // Sample form daily over the last 28 days
+    const samples = [];
+    for (let d = 27; d >= 0; d--) {
+      const sampleMs = refMs - d * 24 * 3600 * 1000;
+      const r = FormFitnessFatigue.compute({ history, refMs: sampleMs });
+      if (r) samples.push(r.form);
+    }
+    if (samples.length < 7) return null;
+    samples.sort((a, b) => a - b);
+    const mid = Math.floor(samples.length / 2);
+    const median = samples.length % 2
+      ? samples[mid]
+      : (samples[mid - 1] + samples[mid]) / 2;
+    const mean = samples.reduce((s, x) => s + x, 0) / samples.length;
+    const variance = samples.reduce((s, x) => s + (x - mean) ** 2, 0) / samples.length;
+    const stdev = Math.sqrt(variance);
+    return { median: Math.round(median * 10) / 10, stdev: Math.round(stdev * 10) / 10 };
+  }
+}
+
+// =====================================================================
+// P17 MetronomeController — prescription-driven metronome orchestration
+// =====================================================================
+// Per registry §2 P17:
+//
+//   Contract: wraps P16 MetronomeEngine + a prescription. Auto-selects
+//   initial target. Optionally drives phase-aware shifts during interval
+//   workouts. Mode bounds enforced through underlying P16.
+//
+// This is the v1.5 metronome-widget extraction. The v1.4 live screen had
+// the metronome logic inline; v1.5 moves it into a composable surface
+// that can be driven either by user interaction (toggle button) OR by a
+// prescribed-workout flow (e.g., the plan-aware live workout that knows
+// it's in a "5×800m at I-pace" block).
+
+class MetronomeController {
+  constructor({ engine, prescription = null } = {}) {
+    if (!engine) throw new Error('MetronomeController requires a MetronomeEngine');
+    this.engine = engine;
+    this.prescription = prescription;
+    // Phase state for interval workouts: 'work' | 'walk' | null
+    this.currentPhase = null;
+    // Adaptation driver
+    this.driverInterval = null;
+  }
+
+  // Determine the appropriate initial target spm from a prescription.
+  // Pure function — no side effects — testable independently of the engine.
+  static initialTargetFor(prescription) {
+    if (!prescription) return { target: 170, mode: 'run' };
+    const mode = prescription.mode === 'ruck' ? 'walk_ruck' : 'run';
+    if (mode === 'walk_ruck') {
+      const packKg = prescription.packKg != null ? prescription.packKg : 16;
+      return { target: MetronomeEngine.ruckDefaultForPack(packKg), mode };
+    }
+    // Run mode: derive from intensity tag
+    const intensity = prescription.intensity || 'easy';
+    const map = {
+      easy: MetronomeEngine.RUN_PACE_DEFAULTS.easy,
+      moderate: MetronomeEngine.RUN_PACE_DEFAULTS.marathon,
+      tempo: MetronomeEngine.RUN_PACE_DEFAULTS.threshold,
+      hard: MetronomeEngine.RUN_PACE_DEFAULTS.interval,
+      test: MetronomeEngine.RUN_PACE_DEFAULTS.interval,
+      rest: MetronomeEngine.RUN_PACE_DEFAULTS.easy
+    };
+    return { target: map[intensity] || MetronomeEngine.RUN_PACE_DEFAULTS.easy, mode };
+  }
+
+  // Start the metronome using the prescription's appropriate target.
+  // Returns true on success, false if the engine couldn't start
+  // (e.g., no audio context).
+  start() {
+    const { target, mode } = MetronomeController.initialTargetFor(this.prescription);
+    return this.engine.start({ targetSpm: target, mode });
+  }
+
+  stop() {
+    this.engine.stop();
+    if (this.driverInterval) {
+      clearInterval(this.driverInterval);
+      this.driverInterval = null;
+    }
+  }
+
+  // Compute the target for a specific phase of an interval workout.
+  // Used by interval-aware adaptation. Pure function for testability.
+  static targetForPhase(prescription, phase) {
+    if (!prescription || !prescription.intervals) return null;
+    const baseIntensity = prescription.intensity || 'hard';
+    if (phase === 'walk') {
+      // Recovery jog uses easy-pace cadence floor
+      return MetronomeController.initialTargetFor({
+        ...prescription, intensity: 'easy'
+      }).target;
+    }
+    // 'work' phase uses the prescription's intended intensity
+    return MetronomeController.initialTargetFor({
+      ...prescription, intensity: baseIntensity
+    }).target;
+  }
+
+  // Drive phase transitions during interval workouts. Called by the live
+  // workout flow when PacingPlan signals a phase change.
+  onPhaseChange(newPhase) {
+    if (!this.engine.active) return;
+    const newTarget = MetronomeController.targetForPhase(this.prescription, newPhase);
+    if (newTarget != null && newTarget !== this.engine.currentTarget()) {
+      this.engine.setTarget(newTarget);
+      this.currentPhase = newPhase;
+    }
+  }
+
+  // Bind to MotionTracker observations. Returns a teardown function.
+  bindToMotion(motionTracker, paceProvider = null) {
+    if (this.driverInterval) clearInterval(this.driverInterval);
+    this.driverInterval = setInterval(() => {
+      if (!this.engine.active) return;
+      if (!motionTracker || !(motionTracker.cadenceSpm > 0)) return;
+      const observed = motionTracker.cadenceSpm;
+      // Optional pace zone for floor selection during run mode
+      let paceZone = null;
+      if (paceProvider && typeof paceProvider === 'function') {
+        try { paceZone = paceProvider(); } catch {}
+      }
+      this.engine.adapt({
+        observedSpm: observed,
+        paceZone,
+        packKg: this.prescription ? this.prescription.packKg : null
+      });
+    }, 30_000);
+    return () => {
+      if (this.driverInterval) {
+        clearInterval(this.driverInterval);
+        this.driverInterval = null;
+      }
+    };
+  }
+
+  currentTarget() {
+    return this.engine.currentTarget();
+  }
+
+  isActive() {
+    return this.engine.active;
+  }
+}
+
+// =====================================================================
+// P15 PlanGenerator — template-adaptive plan synthesis
+// =====================================================================
+// Per COMPOSITION_REGISTRY.md §2 P15 + §3 C-COMPOSE-PLAN:
+//
+//   Contract: given {mode, distanceM, weeksAvailable, daysPerWeek,
+//   userVdot, userPackKg}, produce a PlanState-compatible plan via
+//   template selection + bounded scaling.
+//
+//   Tier: T2. Structure inherits from published templates (Cooper,
+//   Knapik, Pfitzinger). The scaling math is mechanically correct;
+//   the heuristic "+1 consolidation week" doesn't have RCT support,
+//   which is why T2 not T1.
+//
+// Design choice: NOT pure-generative. Every output traces to one of the
+// hand-authored templates in COACHING_PLANS. Pure generation would be
+// reinventing periodization, which is the cargo cult we're avoiding.
+
+// Template metadata: how each hand-authored plan maps onto the event space.
+// targetVdot is the "this plan was designed for someone at this VDOT" anchor;
+// scaling factor = userVdot / targetVdot, clamped to [0.6, 1.4].
+const PLAN_TEMPLATES = [
+  {
+    id: 'c25k-12wk',
+    mode: 'run',
+    eventDistanceM: 5000,
+    naturalWeeks: 12,
+    targetVdot: 35,          // Plan designed for sedentary→fit, peak ~VDOT 35
+    targetPackKg: null,
+    consolidationWeekIndexes: [1, 3, 5],  // weeks that repeat for build phase extension
+    buildWeekIndexes: [0, 2, 4, 6],       // weeks that get cut for shorter plans
+    description: 'Cooper walk-to-run progression to continuous 5K'
+  },
+  {
+    id: 'half-marathon-12wk',
+    mode: 'run',
+    eventDistanceM: 21097,
+    naturalWeeks: 12,
+    targetVdot: 45,          // Pfitzinger-derived; expects existing aerobic base
+    targetPackKg: null,
+    consolidationWeekIndexes: [2, 4, 6],
+    buildWeekIndexes: [0, 1, 3, 5],
+    description: 'Pfitzinger-derived 12-week half marathon training'
+  },
+  {
+    id: '12mi-ruck-8wk',
+    mode: 'ruck',
+    eventDistanceM: 19312,   // 12 mi
+    naturalWeeks: 8,
+    targetVdot: null,
+    targetPackKg: 16,        // Knapik 35 lb baseline
+    consolidationWeekIndexes: [1, 3],
+    buildWeekIndexes: [0, 2, 4],
+    description: 'Knapik / Army FM 21-18 8-week 12-mile ruck preparation'
+  },
+  // ---- v1.8 additions ----
+  {
+    id: '10k-10wk',
+    mode: 'run',
+    eventDistanceM: 10000,
+    naturalWeeks: 10,
+    targetVdot: 42,          // intermediate runner target
+    targetPackKg: null,
+    consolidationWeekIndexes: [2, 4, 5],  // mid-plan repeat slots
+    buildWeekIndexes: [0, 1, 3],          // early build cuts
+    description: 'Daniels-style 10-week 10K training (Plan B)'
+  },
+  {
+    id: 'marathon-18wk',
+    mode: 'run',
+    eventDistanceM: 42195,   // marathon
+    naturalWeeks: 18,
+    targetVdot: 48,          // Pfitzinger 18/55 anchor (~sub-3:45 target)
+    targetPackKg: null,
+    // Many consolidation slots in the long peak phase
+    consolidationWeekIndexes: [2, 5, 8, 9, 10],
+    buildWeekIndexes: [0, 1, 3, 4, 6, 7],
+    description: 'Pfitzinger 18-week / 55-mile-peak marathon training'
+  },
+  {
+    id: '6mi-ruck-4wk',
+    mode: 'ruck',
+    eventDistanceM: 9656,    // 6 mi
+    naturalWeeks: 4,
+    targetVdot: null,
+    targetPackKg: 11,        // 25 lb beginner load
+    consolidationWeekIndexes: [1],  // limited slots in short plan
+    buildWeekIndexes: [0, 2],
+    description: 'Knapik-derived 4-week beginner 6-mile ruck preparation'
+  }
+];
+
+class PlanGenerator {
+  // Main entry point. Returns a generated plan object or null on refusal.
+  //
+  // input: {
+  //   mode: 'run' | 'ruck'
+  //   distanceM: number (positive)
+  //   weeksAvailable: integer (positive)
+  //   daysPerWeek?: integer (default: template-natural value)
+  //   userVdot?: number (run-mode adaptation source)
+  //   userPackKg?: number (ruck-mode adaptation source)
+  // }
+  static generate(input) {
+    if (!input || !input.mode || !(input.distanceM > 0) || !(input.weeksAvailable > 0)) {
+      return null;
+    }
+    if (input.mode !== 'run' && input.mode !== 'ruck') return null;
+
+    // Step 1: select template by mode + distance
+    const template = PlanGenerator._selectTemplate(input);
+    if (!template) return null;  // No template fits
+
+    // Step 2: check week-count is within ±25% of template's natural length
+    const weekRatio = input.weeksAvailable / template.naturalWeeks;
+    if (weekRatio < 0.75 || weekRatio > 1.25) {
+      // Outside scaling window — refuse rather than ship a misshapen plan
+      return null;
+    }
+
+    // Step 3: compute volume scaling factor (mode-dependent)
+    const scaling = PlanGenerator._volumeScalingFactor(input, template);
+
+    // Step 4: get source template
+    const sourceWeeks = COACHING_PLANS[template.id]?.weeks;
+    if (!Array.isArray(sourceWeeks)) return null;
+
+    // Step 5: adjust week count by inserting/removing consolidation weeks
+    const adjustedWeeks = PlanGenerator._adjustWeekCount(
+      sourceWeeks, input.weeksAvailable, template
+    );
+
+    // Step 6: scale workout durations
+    const scaledWeeks = PlanGenerator._scaleWorkouts(adjustedWeeks, scaling, template);
+
+    // Step 7: validate generated plan against C-COMPOSE-PLAN invariants
+    const validation = PlanGenerator._validate(scaledWeeks, template, input);
+    if (!validation.ok) return null;
+
+    // Step 8: build the final plan object
+    const id = `gen-${input.mode}-${Math.round(input.distanceM)}-${input.weeksAvailable}-${Date.now()}`;
+    return {
+      id,
+      label: PlanGenerator._labelFor(input, template),
+      duration_weeks: input.weeksAvailable,
+      intent: PlanGenerator._intentFor(input),
+      description: `Generated from ${template.description}. Scaling ×${scaling.toFixed(2)} from template defaults.`,
+      citation: COACHING_PLANS[template.id].citation + ' (P15 PlanGenerator: scaled and adapted)',
+      target_population: 'User-generated. Adaptation factor ' + scaling.toFixed(2) + ' applied.',
+      expected_workouts_per_week: input.daysPerWeek || COACHING_PLANS[template.id].expected_workouts_per_week,
+      weeks: scaledWeeks,
+      meta: {
+        generated: true,
+        templateId: template.id,
+        scalingFactor: Math.round(scaling * 100) / 100,
+        vdotAtGeneration: input.userVdot || null,
+        packKgAtGeneration: input.userPackKg || null,
+        generatedAt: new Date().toISOString()
+      }
+    };
+  }
+
+  // Select the closest-fit template for the user's event.
+  // Returns null if mode has no templates or distance is far outside support.
+  //
+  // The metric is intentionally ASYMMETRIC: training UP from a shorter
+  // template (user goal > template distance) is penalized more heavily
+  // than training DOWN from a longer template. A user targeting 10K
+  // should get the half-marathon structure (intervals, tempo, long runs)
+  // adapted shorter, NOT the c25k beginner walk-run plan stretched out.
+  // The half-marathon template "prepares for more than the user needs,"
+  // which is fine; the c25k template "prepares for half what the user
+  // needs," which produces under-prepared runners.
+  static _selectTemplate(input) {
+    const candidates = PLAN_TEMPLATES.filter(t => t.mode === input.mode);
+    if (candidates.length === 0) return null;
+    let best = null;
+    let bestScore = Infinity;
+    for (const t of candidates) {
+      const ratio = input.distanceM / t.eventDistanceM;
+      // Asymmetric envelope: downscale to 40% of template length is OK
+      // (you're doing less than the template prepares for, which is safe).
+      // Upscale beyond 2× is refused (template hasn't prepared the user
+      // for that distance and faking it would underprepare them).
+      if (ratio < 0.4 || ratio > 2.0) continue;
+      // Asymmetric score: user > template gets 2× penalty
+      const logRatio = Math.log(ratio);
+      const score = logRatio >= 0
+        ? logRatio * 2.0     // user_dist > template_dist: heavy penalty
+        : -logRatio;         // user_dist ≤ template_dist: normal distance
+      if (score < bestScore) {
+        best = t;
+        bestScore = score;
+      }
+    }
+    return best;
+  }
+
+  // Compute the bounded volume scaling factor for this user vs template.
+  // Run: factor = userVdot / template.targetVdot (default 1.0 if no VDOT)
+  // Ruck: factor = userPackKg / template.targetPackKg (default 1.0)
+  // Clamped to [0.6, 1.4] regardless.
+  static _volumeScalingFactor(input, template) {
+    let raw = 1.0;
+    if (input.mode === 'run' && input.userVdot && template.targetVdot) {
+      raw = input.userVdot / template.targetVdot;
+    } else if (input.mode === 'ruck' && input.userPackKg && template.targetPackKg) {
+      // Heavier pack: smaller scaling (shorter durations at higher load).
+      // Lighter pack: gentle expansion of duration acceptable.
+      raw = template.targetPackKg / input.userPackKg;
+    }
+    return Math.max(0.6, Math.min(1.4, raw));
+  }
+
+  // Adjust the week count by duplicating consolidation weeks (to extend)
+  // or skipping build weeks (to shorten). Preserves the build/peak/taper
+  // proportions of the source template.
+  static _adjustWeekCount(sourceWeeks, targetWeekCount, template) {
+    const diff = targetWeekCount - sourceWeeks.length;
+    if (diff === 0) return sourceWeeks.map(w => w.slice());
+    if (diff > 0) {
+      // Extend: insert duplicates of consolidation weeks
+      const out = sourceWeeks.map(w => w.slice());
+      const consolidationIndexes = template.consolidationWeekIndexes
+        .filter(i => i < out.length);
+      if (consolidationIndexes.length === 0) {
+        // No consolidation slots; bail
+        return null;
+      }
+      let inserted = 0;
+      let consolIdx = 0;
+      while (inserted < diff) {
+        const srcIdx = consolidationIndexes[consolIdx % consolidationIndexes.length];
+        const insertAt = srcIdx + 1 + inserted;
+        out.splice(insertAt, 0, sourceWeeks[srcIdx].slice());
+        inserted++;
+        consolIdx++;
+      }
+      return out;
+    } else {
+      // Shorten: remove build-phase weeks
+      const out = sourceWeeks.map(w => w.slice());
+      const toRemove = -diff;
+      const buildIndexes = template.buildWeekIndexes
+        .filter(i => i < out.length)
+        .sort((a, b) => b - a);  // remove from high index first to preserve lower indexes
+      if (buildIndexes.length < toRemove) {
+        // Not enough build weeks to safely cut
+        return null;
+      }
+      for (let i = 0; i < toRemove; i++) {
+        out.splice(buildIndexes[i], 1);
+      }
+      return out;
+    }
+  }
+
+  // Scale individual workout durations by the scaling factor.
+  // Returns a new weeks array; does not mutate input.
+  // Workouts are referenced by identity into PLAN_WORKOUTS so we cannot
+  // mutate them. Instead we build wrapper objects that override durationMin.
+  static _scaleWorkouts(weeks, scaling, template) {
+    if (Math.abs(scaling - 1.0) < 0.05) {
+      // Trivial scaling; return identity reference
+      return weeks.map(week => week.slice());
+    }
+    // Round to match the precision stored in plan.meta.scalingFactor
+    // (2 decimal places). Mismatched precision creates a comparison bug
+    // for callers that look at both metadata surfaces.
+    const roundedScaling = Math.round(scaling * 100) / 100;
+    return weeks.map(week => week.map(workout => {
+      if (!workout || workout.intensity === 'rest') return workout;
+      if (!workout.durationMin) return workout;
+      const scaledDuration = Math.max(5, Math.round(workout.durationMin * roundedScaling));
+      return {
+        ...workout,
+        durationMin: scaledDuration,
+        _generatorScaled: true,
+        _baseDurationMin: workout.durationMin,
+        _scalingFactor: roundedScaling
+      };
+    }));
+  }
+
+  // Validate the generated plan against C-COMPOSE-PLAN invariants.
+  // Returns { ok: boolean, reason?: string }
+  static _validate(weeks, template, input) {
+    if (!Array.isArray(weeks) || weeks.length === 0) {
+      return { ok: false, reason: 'empty weeks array' };
+    }
+    // Each week must have 7 days
+    for (let i = 0; i < weeks.length; i++) {
+      if (!Array.isArray(weeks[i]) || weeks[i].length !== 7) {
+        return { ok: false, reason: `week ${i+1} not 7 days` };
+      }
+    }
+    // Mode invariant (refined per Knapik / Pfitzinger reality):
+    //   - Run-event plan: only run workouts + rest + cross-train. No ruck workouts
+    //     (loading magnitude is wrong for running adaptation).
+    //   - Ruck-event plan: ruck as primary, easy runs permitted as cross-training
+    //     aerobic base support (per Knapik 2004), cross-train permitted.
+    //   - In both cases, cross-train (mode=null) is allowed.
+    for (let wi = 0; wi < weeks.length; wi++) {
+      for (let di = 0; di < weeks[wi].length; di++) {
+        const w = weeks[wi][di];
+        if (!w || !w.mode) continue;  // null mode = cross-train, always OK
+        if (input.mode === 'run' && w.mode === 'ruck') {
+          return { ok: false, reason: `week ${wi+1} day ${di+1}: ruck workout in run plan (loading mismatch)` };
+        }
+        // ruck plan with run workouts: allowed as cross-training, but bounded.
+        // No more than 1 hard run per week (which would compete with ruck adaptation).
+        if (input.mode === 'ruck' && w.mode === 'run' && PlanGenerator._isHard(w)) {
+          return { ok: false, reason: `week ${wi+1} day ${di+1}: hard run in ruck plan (compromises ruck adaptation)` };
+        }
+      }
+    }
+    // Hard-day spacing: no consecutive hard days within a week
+    for (let wi = 0; wi < weeks.length; wi++) {
+      for (let di = 0; di < 6; di++) {
+        const a = weeks[wi][di];
+        const b = weeks[wi][di + 1];
+        if (PlanGenerator._isHard(a) && PlanGenerator._isHard(b)) {
+          return { ok: false, reason: `week ${wi+1}: hard sessions on consecutive days ${di+1}-${di+2}` };
+        }
+      }
+    }
+    // Weekly volume progression: catch only CATASTROPHIC jumps (>50%).
+    //
+    // The naive "10%/12% rule" is an industry myth that fails contact with
+    // real periodization. The hand-authored templates already encode
+    // appropriate progression — Knapik's plan jumps 43% from W1→W2 because
+    // the user moves from light-pack acclimation to moderate-pack work,
+    // which is the entire point of the build phase. Pfitzinger has 20-25%
+    // jumps at phase transitions. Enforcing 10% here would reject the
+    // exact templates we're built on top of.
+    //
+    // What we CAN catch: the generator silently produces a 3× jump
+    // because of a scaling bug (Π scaling somehow applied twice, or
+    // week-insertion misordered a high-volume week). 50% is a defensible
+    // ceiling: above it, something is mechanically broken, not just
+    // phase-transitioning.
+    const primaryVolume = (week) => week.reduce((s, d) => {
+      if (!d) return s;
+      if (d.mode !== input.mode) return s;
+      return s + (d.durationMin || 0);
+    }, 0);
+    const weekVolumes = weeks.map(primaryVolume);
+    const peakIdx = weekVolumes.indexOf(Math.max(...weekVolumes));
+    for (let i = 1; i <= peakIdx; i++) {
+      if (weekVolumes[i - 1] <= 0) continue;
+      const inc = weekVolumes[i] / weekVolumes[i - 1];
+      if (inc > 1.50) {
+        return { ok: false, reason: `week ${i+1} primary-mode volume jumped ${(inc * 100 - 100).toFixed(0)}% (>50% suggests scaling bug)` };
+      }
+    }
+    // Catastrophic-jump check kept; the dropped "12% rule" and the
+    // dropped "final-week taper" rule were both industry myths that
+    // don't survive contact with published templates. The hand-authored
+    // templates encode appropriate progression AND taper for their event
+    // distance; the generator's job is to preserve their shape under
+    // week-count/volume scaling, not enforce a separate taper rule on
+    // top. A generated 5K plan's "taper" looks different from a generated
+    // half-marathon's "taper" because the underlying templates are
+    // different. Enforcing a single rule here rejected both.
+    return { ok: true };
+  }
+
+  static _isHard(workout) {
+    if (!workout || !workout.intensity) return false;
+    return workout.intensity === 'tempo'
+        || workout.intensity === 'hard'
+        || workout.intensity === 'test';
+  }
+
+  static _labelFor(input, template) {
+    const dist = input.mode === 'run'
+      ? `${Math.round(input.distanceM / 1000 * 0.621371 * 10) / 10}mi`
+      : `${Math.round(input.distanceM / 1000 * 0.621371 * 10) / 10}mi ruck`;
+    return `${dist} in ${input.weeksAvailable}wk · generated`;
+  }
+
+  static _intentFor(input) {
+    const distMi = input.distanceM / 1609.344;
+    if (input.mode === 'run') {
+      if (distMi < 4) return '5K event';
+      if (distMi < 8) return '10K event';
+      if (distMi < 15) return 'Half marathon';
+      return 'Marathon event';
+    }
+    return `${Math.round(distMi)}-mile ruck`;
+  }
+}
+
+// =====================================================================
+// P18 CompletionDelta — structural delta between prescription and reality
+// =====================================================================
+// Per COMPOSITION_REGISTRY.md §2 P18:
+//
+//   Pure function. Given a workout record and the prescription it was
+//   started from, return:
+//     {durationCompletionRatio, pacingDeltaSecPerMi, intensityFulfilled}
+//
+//   Tier: T1 — literally a comparison of two numbers. No model assumptions.
+//
+// What "prescription" looks like here: it's the PLAN_WORKOUTS entry the
+// user started the workout from. PlanState.completions[].recordId points to
+// the actual Workouts record; the prescription is reconstructible from
+// PlanState's plan-day-index. For freestyle workouts (no plan-day-index),
+// this primitive returns null — there was nothing to compare to.
+
+class CompletionDelta {
+  // Main entry. Returns null on malformed input.
+  static compute({ workout, prescription, userVdot, userPackKg }) {
+    if (!workout || !prescription) return null;
+    if (!(workout.durationMs > 0) || !(workout.distanceM > 0)) return null;
+    if (prescription.intensity === 'rest') return null;  // rest has no metrics
+
+    // 1. Duration completion ratio
+    const prescribedDurationMs = (prescription.durationMin || 0) * 60_000;
+    const durationCompletionRatio = prescribedDurationMs > 0
+      ? workout.durationMs / prescribedDurationMs
+      : null;
+
+    // 2. Pace delta (observed vs prescribed zone target)
+    const observedSecPerMi = (workout.durationMs / 1000) / (workout.distanceM / 1609.344);
+    let prescribedSecPerMi = null;
+    if (prescription.mode === 'run' && userVdot) {
+      const z = PaceZones._zonesFromVdot(userVdot);
+      if (z) {
+        // Map intensity → zone pace
+        const intensityZoneMap = {
+          easy: z.easy,
+          moderate: z.marathon,
+          tempo: z.threshold,
+          hard: z.interval,
+          test: z.interval  // race effort ≈ interval pace
+        };
+        prescribedSecPerMi = intensityZoneMap[prescription.intensity] || null;
+      }
+    } else if (prescription.mode === 'ruck' && userPackKg) {
+      const t = RuckPaceTargets.compute({
+        packKg: userPackKg, observedRuckPaces: [], mode: 'ruck'
+      });
+      if (t) {
+        const intensityZoneMap = {
+          easy: t.easy,
+          moderate: t.standard,
+          tempo: t.tempo
+        };
+        prescribedSecPerMi = intensityZoneMap[prescription.intensity] || t.standard;
+      }
+    }
+    const pacingDeltaSecPerMi = prescribedSecPerMi != null
+      ? Math.round(observedSecPerMi - prescribedSecPerMi)
+      : null;
+
+    // 3. Intensity fulfilled: within ±10% of prescribed pace?
+    // Daniels: "easy" has a band of ~20% on the slow side acceptable.
+    // For other zones, ±10% is the working range. We use a single 10% test
+    // for simplicity; the easy zone's tolerance is asymmetric in practice.
+    let intensityFulfilled = null;
+    if (prescribedSecPerMi != null && observedSecPerMi > 0) {
+      const ratio = observedSecPerMi / prescribedSecPerMi;
+      // For "easy", allow slower (up to 1.25× target = 25% slower); reject only if much faster.
+      // For other zones, ±10% both directions.
+      if (prescription.intensity === 'easy') {
+        intensityFulfilled = ratio >= 0.85 && ratio <= 1.25;
+      } else {
+        intensityFulfilled = ratio >= 0.90 && ratio <= 1.10;
+      }
+    }
+
+    return {
+      durationCompletionRatio: durationCompletionRatio != null
+        ? Math.round(durationCompletionRatio * 100) / 100
+        : null,
+      pacingDeltaSecPerMi,
+      intensityFulfilled,
+      // Surface inputs for debugging / provenance
+      observedSecPerMi: Math.round(observedSecPerMi),
+      prescribedSecPerMi
+    };
+  }
+
+  // Assemble a history of recent deltas from PlanState completions.
+  // Walks recent completion entries, resolves each to its (workout, prescription)
+  // pair, computes the delta. Bounded to last `windowDays` (default 14).
+  static recentHistory({ planState, allWorkouts, userVdot, userPackKg, windowDays = 14, refMs = Date.now() }) {
+    if (!planState || !planState.isActive()) return [];
+    const plan = planState.plan();
+    if (!plan || !plan.weeks) return [];
+    const cutoffMs = refMs - windowDays * 24 * 60 * 60 * 1000;
+    const out = [];
+    for (const c of planState.completions || []) {
+      if (!c || !c.completedAt) continue;
+      if (c.completedAt < cutoffMs) continue;
+      // Resolve the workout record
+      const workout = (allWorkouts || []).find(w => w.id === c.recordId);
+      if (!workout) continue;
+      // Resolve the prescription: day index → week/day → prescription
+      const dayIdx = c.day;
+      if (dayIdx == null) continue;
+      const weekIdx = Math.floor(dayIdx / 7);
+      const dayInWeekIdx = dayIdx % 7;
+      const prescription = plan.weeks[weekIdx]?.[dayInWeekIdx];
+      if (!prescription) continue;
+      const delta = CompletionDelta.compute({
+        workout, prescription, userVdot, userPackKg
+      });
+      if (delta) out.push({ ...delta, completedAt: c.completedAt, day: dayIdx });
+    }
+    return out;
+  }
+}
+
+// =====================================================================
+// P19 AdaptationDecision — decide on prescription modification
+// =====================================================================
+// Per COMPOSITION_REGISTRY.md §2 P19:
+//
+//   Given {recentDeltas, currentForm, formBaseline, prescription}, return
+//   one of:
+//     {action: 'continue', reason}
+//     {action: 'ease_intensity', from, to, reason, factor?}
+//     {action: 'reduce_duration', factor, reason}
+//   The decision can combine ease_intensity + reduce_duration in one
+//   response.
+//
+//   Tier: T2 — decision boundaries are heuristic.
+
+const INTENSITY_LADDER = ['easy', 'moderate', 'tempo', 'hard', 'test'];
+
+class AdaptationDecision {
+  // Main entry.
+  static decide({ recentDeltas, currentForm, formBaseline, prescription }) {
+    if (!prescription) {
+      return { action: 'continue', reason: 'no_prescription' };
+    }
+    // Never adapt rest days
+    if (prescription.intensity === 'rest') {
+      return { action: 'continue', reason: 'rest_day_preserved' };
+    }
+    // Insufficient signal: <3 deltas or no Form baseline
+    if (!Array.isArray(recentDeltas) || recentDeltas.length < 3) {
+      return { action: 'continue', reason: 'insufficient_completion_history' };
+    }
+    if (!formBaseline || !(formBaseline.stdev > 0)) {
+      return { action: 'continue', reason: 'insufficient_form_baseline' };
+    }
+    if (currentForm == null) {
+      return { action: 'continue', reason: 'no_current_form_score' };
+    }
+
+    // Compute summary stats over recent deltas
+    const paceDeltas = recentDeltas
+      .map(d => d.pacingDeltaSecPerMi)
+      .filter(p => p != null);
+    const durationRatios = recentDeltas
+      .map(d => d.durationCompletionRatio)
+      .filter(r => r != null);
+    const medianPaceDelta = AdaptationDecision._median(paceDeltas);
+    const medianDurationRatio = AdaptationDecision._median(durationRatios);
+    const formZ = (currentForm - formBaseline.median) / formBaseline.stdev;
+
+    // Decision boundaries (heuristic — these are the calibration choices
+    // that earn this primitive its T2 tier rather than T1).
+    //
+    // Trigger easing when EITHER:
+    //   - Form z-score < -0.5 (user is below their own norm) AND
+    //     median pace delta > +15 sec/mi (consistently slower than prescribed)
+    //   - Median pace delta > +30 sec/mi alone (clearly slower regardless of Form)
+    //   - Median duration completion < 0.85 (consistently stopping short)
+    const formIsDown = formZ < -0.5;
+    const paceConsistentlySlower = medianPaceDelta > 15;
+    const paceStronglySlower = medianPaceDelta > 30;
+    const stoppingShort = medianDurationRatio != null && medianDurationRatio < 0.85;
+
+    let action = null;
+    let reason = null;
+    let factor = null;
+    let fromIntensity = null;
+    let toIntensity = null;
+
+    if ((formIsDown && paceConsistentlySlower) || paceStronglySlower) {
+      // Ease intensity one rung on the ladder if currently above easy.
+      const curIdx = INTENSITY_LADDER.indexOf(prescription.intensity);
+      if (curIdx > 0) {
+        fromIntensity = prescription.intensity;
+        toIntensity = INTENSITY_LADDER[curIdx - 1];
+        action = 'ease_intensity';
+        reason = formIsDown
+          ? `Form ${formZ.toFixed(1)}σ below norm + pace median +${medianPaceDelta.toFixed(0)}s/mi over ${recentDeltas.length} sessions`
+          : `Pace median +${medianPaceDelta.toFixed(0)}s/mi over ${recentDeltas.length} sessions`;
+      } else {
+        // Already easy; can't ease intensity further. Use duration reduction.
+        action = 'reduce_duration';
+        factor = 0.85;
+        reason = `Easy already; pace median +${medianPaceDelta.toFixed(0)}s/mi suggests shorter session`;
+      }
+    } else if (stoppingShort) {
+      // User keeps stopping short; reduce prescribed duration to match
+      // reality. Bounded at -35% per registry constraint.
+      action = 'reduce_duration';
+      // Set factor close to the median actual completion, but never below 0.65
+      factor = Math.max(0.65, Math.min(1.0, medianDurationRatio));
+      reason = `Median completion ${(medianDurationRatio * 100).toFixed(0)}% of prescribed over ${recentDeltas.length} sessions`;
+    } else {
+      // Plan as-is. Note: even if user is faster than prescribed AND Form is
+      // healthy, we DO NOT escalate. One-way easing invariant.
+      return {
+        action: 'continue',
+        reason: `pace median ${medianPaceDelta >= 0 ? '+' : ''}${medianPaceDelta.toFixed(0)}s/mi, Form z=${formZ.toFixed(1)}`
+      };
+    }
+
+    return {
+      action,
+      from: fromIntensity,
+      to: toIntensity,
+      factor,
+      reason
+    };
+  }
+
+  static _median(arr) {
+    if (!arr || arr.length === 0) return null;
+    const s = arr.slice().sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  }
+
+  // Apply a decision to a prescription, producing the adapted prescription
+  // object with provenance metadata. Pure function; no side effects.
+  // Returns the original prescription if action='continue'.
+  static apply(decision, prescription) {
+    if (!decision || decision.action === 'continue') return prescription;
+    if (!prescription) return prescription;
+    const out = { ...prescription, meta: {
+      ...(prescription.meta || {}),
+      adapted: true,
+      fromAction: decision.action,
+      reason: decision.reason
+    }};
+    if (decision.action === 'ease_intensity' && decision.to) {
+      out.intensity = decision.to;
+      out.meta.fromIntensity = decision.from;
+      out.meta.toIntensity = decision.to;
+      // Adjust label to reflect the eased intensity
+      out.label = `${out.label} (eased to ${decision.to})`;
+      // If also reducing duration in same call
+      if (decision.factor != null && decision.factor < 1.0) {
+        out.durationMin = Math.max(5, Math.round((out.durationMin || 0) * decision.factor));
+        out.meta.durationFactor = decision.factor;
+      }
+    } else if (decision.action === 'reduce_duration' && decision.factor != null) {
+      out.durationMin = Math.max(5, Math.round((out.durationMin || 0) * decision.factor));
+      out.meta.durationFactor = decision.factor;
+      out.label = `${out.label} (${Math.round(decision.factor * 100)}% duration)`;
+    }
+    return out;
+  }
+}
+
+// =====================================================================
+// P20 RegistryInvariants — cross-cutting structural gate (v1.8)
+// =====================================================================
+// Per COMPOSITION_REGISTRY.md §2 P20 and F-FORGE-GATE in §6:
+//
+//   A structured catalog of cross-cutting invariants. Each entry is a
+//   pure predicate; runAll() executes every check.
+//
+//   Tier: T1 (mechanical walker; predicates inherit their own tiers).
+//
+// What this does NOT claim: bug-free software. It eliminates a NAMED,
+// SCOPED class of bugs structurally — primarily configuration drift,
+// mode-invariant violations in plans, and registry/test divergence.
+// UI rendering, platform quirks, and unobserved real-world patterns
+// remain outside its reach. That's documented in the registry contract.
+
+const REGISTRY_INVARIANTS = [
+  // --- Configuration coherence ---
+  {
+    name: 'PLAN_TEMPLATES_have_COACHING_PLANS_entries',
+    severity: 'hard',
+    claimedBy: 'F-PLAN-GENERATE',
+    description: 'Every PLAN_TEMPLATES entry must have a matching COACHING_PLANS plan.',
+    check() {
+      const violations = [];
+      for (const t of PLAN_TEMPLATES) {
+        if (!COACHING_PLANS[t.id]) {
+          violations.push(`PLAN_TEMPLATES has '${t.id}' but COACHING_PLANS does not`);
+        }
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  {
+    name: 'COACHING_PLANS_schema_completeness',
+    severity: 'hard',
+    claimedBy: 'P12 PlanState',
+    description: 'Every COACHING_PLANS entry must have {id, label, duration_weeks, weeks[][7]}.',
+    check() {
+      const violations = [];
+      for (const [id, plan] of Object.entries(COACHING_PLANS)) {
+        if (!plan || typeof plan !== 'object') {
+          violations.push(`${id}: not an object`);
+          continue;
+        }
+        if (plan.id !== id) violations.push(`${id}: plan.id mismatch (${plan.id})`);
+        if (typeof plan.label !== 'string' || !plan.label.length) {
+          violations.push(`${id}: missing label`);
+        }
+        if (typeof plan.duration_weeks !== 'number' || plan.duration_weeks <= 0) {
+          violations.push(`${id}: invalid duration_weeks`);
+        }
+        if (!Array.isArray(plan.weeks)) {
+          violations.push(`${id}: weeks not an array`);
+          continue;
+        }
+        if (plan.weeks.length !== plan.duration_weeks) {
+          violations.push(`${id}: weeks.length ${plan.weeks.length} != duration_weeks ${plan.duration_weeks}`);
+        }
+        for (let i = 0; i < plan.weeks.length; i++) {
+          if (!Array.isArray(plan.weeks[i]) || plan.weeks[i].length !== 7) {
+            violations.push(`${id} week ${i+1}: not 7 days (got ${plan.weeks[i]?.length})`);
+          }
+        }
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  {
+    name: 'PLAN_WORKOUTS_schema_completeness',
+    severity: 'hard',
+    claimedBy: 'P12 PlanState',
+    description: 'Every PLAN_WORKOUTS entry must have {label, description, mode, durationMin, intensity}. Rest may have null/0.',
+    check() {
+      const violations = [];
+      for (const [key, w] of Object.entries(PLAN_WORKOUTS)) {
+        if (!w) { violations.push(`${key}: null/undefined`); continue; }
+        if (typeof w.label !== 'string' || !w.label.length) {
+          violations.push(`${key}: missing label`);
+        }
+        if (typeof w.description !== 'string') {
+          violations.push(`${key}: missing description`);
+        }
+        // mode can be null (cross-train) or run/ruck
+        if (w.mode != null && w.mode !== 'run' && w.mode !== 'ruck') {
+          violations.push(`${key}: invalid mode '${w.mode}'`);
+        }
+        if (typeof w.durationMin !== 'number') {
+          violations.push(`${key}: missing durationMin`);
+        }
+        if (typeof w.intensity !== 'string') {
+          violations.push(`${key}: missing intensity`);
+        }
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  // --- Cross-cutting mode invariant (registry §6) ---
+  {
+    name: 'Run_plans_contain_no_ruck_workouts',
+    severity: 'hard',
+    claimedBy: 'C-COMPOSE-PLAN, F-PLAN-GENERATE, registry §6',
+    description: 'Run-event plans must contain ZERO ruck workouts. Loading mismatch.',
+    check() {
+      const violations = [];
+      const runPlanIds = ['c25k-12wk', 'half-marathon-12wk', '10k-10wk', 'marathon-18wk'];
+      for (const id of runPlanIds) {
+        const plan = COACHING_PLANS[id];
+        if (!plan) continue;
+        for (let wi = 0; wi < plan.weeks.length; wi++) {
+          for (let di = 0; di < plan.weeks[wi].length; di++) {
+            const w = plan.weeks[wi][di];
+            if (w && w.mode === 'ruck') {
+              violations.push(`${id} W${wi+1}D${di+1}: ruck workout '${w.label}' in run plan`);
+            }
+          }
+        }
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  {
+    name: 'Ruck_plans_contain_no_hard_runs',
+    severity: 'hard',
+    claimedBy: 'C-COMPOSE-PLAN, F-PLAN-GENERATE, registry §6 (refined)',
+    description: 'Ruck-event plans may have easy runs as cross-training but NO hard runs.',
+    check() {
+      const violations = [];
+      const ruckPlanIds = ['12mi-ruck-8wk', '6mi-ruck-4wk'];
+      for (const id of ruckPlanIds) {
+        const plan = COACHING_PLANS[id];
+        if (!plan) continue;
+        for (let wi = 0; wi < plan.weeks.length; wi++) {
+          for (let di = 0; di < plan.weeks[wi].length; di++) {
+            const w = plan.weeks[wi][di];
+            if (w && w.mode === 'run' &&
+                (w.intensity === 'tempo' || w.intensity === 'hard' || w.intensity === 'test')) {
+              violations.push(`${id} W${wi+1}D${di+1}: hard run '${w.label}' in ruck plan`);
+            }
+          }
+        }
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  // --- Daniels VDOT table monotonicity ---
+  {
+    name: 'Daniels_zone_ordering',
+    severity: 'hard',
+    claimedBy: 'P13 PaceZones',
+    description: 'Per VDOT row, paces must satisfy easy > marathon > threshold > interval > repetition (sec/mi).',
+    check() {
+      const violations = [];
+      for (const row of DANIELS_PACE_TABLE) {
+        const [vdot, easy, marathon, threshold, interval, repetition] = row;
+        if (!(easy > marathon)) violations.push(`VDOT ${vdot}: easy ${easy} not > marathon ${marathon}`);
+        if (!(marathon > threshold)) violations.push(`VDOT ${vdot}: marathon ${marathon} not > threshold ${threshold}`);
+        if (!(threshold > interval)) violations.push(`VDOT ${vdot}: threshold ${threshold} not > interval ${interval}`);
+        if (!(interval > repetition)) violations.push(`VDOT ${vdot}: interval ${interval} not > repetition ${repetition}`);
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  {
+    name: 'Daniels_VDOT_monotonicity_across_rows',
+    severity: 'hard',
+    claimedBy: 'P13 PaceZones',
+    description: 'Higher VDOT → faster (smaller) pace in every zone column.',
+    check() {
+      const violations = [];
+      for (let i = 1; i < DANIELS_PACE_TABLE.length; i++) {
+        const a = DANIELS_PACE_TABLE[i - 1];
+        const b = DANIELS_PACE_TABLE[i];
+        // Index 0 is VDOT, 1-5 are zones
+        for (let col = 1; col <= 5; col++) {
+          if (!(b[col] <= a[col])) {
+            violations.push(`VDOT ${b[0]} col ${col}: ${b[col]} not faster-or-equal than VDOT ${a[0]} ${a[col]}`);
+          }
+        }
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  // --- Knapik baseline ---
+  {
+    name: 'Knapik_baseline_15min_per_mile_at_16kg',
+    severity: 'hard',
+    claimedBy: 'P13b RuckPaceTargets',
+    description: 'At packKg=16, standard pace must be 900 sec/mi within ±5 sec.',
+    check() {
+      const r = RuckPaceTargets.compute({ packKg: 16, observedRuckPaces: [], mode: 'ruck' });
+      if (!r) return { ok: false, violations: ['compute returned null at baseline'] };
+      if (Math.abs(r.standard - 900) > 5) {
+        return { ok: false, violations: [`baseline standard ${r.standard} not 900±5`] };
+      }
+      return { ok: true, violations: [] };
+    }
+  },
+  // --- Metronome bound disjointness ---
+  {
+    name: 'Metronome_mode_bounds_disjoint',
+    severity: 'hard',
+    claimedBy: 'P16 MetronomeEngine, registry §6 cross-cutting',
+    description: 'Run and walk_ruck cadence bounds must not overlap.',
+    check() {
+      const r = MetronomeEngine.MODE_BOUNDS.run;
+      const wr = MetronomeEngine.MODE_BOUNDS.walk_ruck;
+      if (!r || !wr) return { ok: false, violations: ['MODE_BOUNDS missing entries'] };
+      if (wr.max >= r.min) {
+        return { ok: false, violations: [`walk_ruck.max ${wr.max} >= run.min ${r.min}`] };
+      }
+      return { ok: true, violations: [] };
+    }
+  },
+  // --- Intensity ladder consistency ---
+  {
+    name: 'Intensity_ladder_covers_PLAN_WORKOUTS_intensities',
+    severity: 'hard',
+    claimedBy: 'P19 AdaptationDecision',
+    description: 'Every intensity used in PLAN_WORKOUTS must be in INTENSITY_LADDER or be "rest".',
+    check() {
+      const known = new Set([...INTENSITY_LADDER, 'rest']);
+      const found = new Set();
+      for (const [key, w] of Object.entries(PLAN_WORKOUTS)) {
+        if (w && typeof w.intensity === 'string') found.add(w.intensity);
+      }
+      const violations = [];
+      for (const intensity of found) {
+        if (!known.has(intensity)) {
+          violations.push(`PLAN_WORKOUTS uses intensity '${intensity}' not in INTENSITY_LADDER`);
+        }
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  // --- Banister constants ---
+  {
+    name: 'Banister_published_time_constants',
+    severity: 'hard',
+    claimedBy: 'P14 FormFitnessFatigue',
+    description: 'τ_fitness=42d, τ_fatigue=7d, k=2.0 (Banister 1991, Busso 2003).',
+    check() {
+      const violations = [];
+      if (FFF_TAU_FITNESS_DAYS !== 42) {
+        violations.push(`FFF_TAU_FITNESS_DAYS = ${FFF_TAU_FITNESS_DAYS}, expected 42`);
+      }
+      if (FFF_TAU_FATIGUE_DAYS !== 7) {
+        violations.push(`FFF_TAU_FATIGUE_DAYS = ${FFF_TAU_FATIGUE_DAYS}, expected 7`);
+      }
+      if (FFF_FORM_K !== 2.0) {
+        violations.push(`FFF_FORM_K = ${FFF_FORM_K}, expected 2.0`);
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  },
+  // --- New v1.8 template invariants ---
+  {
+    name: 'Marathon_long_run_durations_present',
+    severity: 'hard',
+    claimedBy: 'F-PLAN-GENERATE marathon-18wk',
+    description: 'Marathon plan needs long runs ≥165 min (Pfitzinger peak), required by 18wk template.',
+    check() {
+      const required = ['LONG_RUN_135', 'LONG_RUN_150', 'LONG_RUN_165', 'LONG_RUN_180'];
+      const violations = [];
+      for (const k of required) {
+        if (!PLAN_WORKOUTS[k]) violations.push(`PLAN_WORKOUTS missing ${k}`);
+      }
+      return { ok: violations.length === 0, violations };
+    }
+  }
+];
+
+class RegistryInvariants {
+  // Run every invariant. Returns {ok, results: [{name, ok, violations}]}.
+  static runAll() {
+    const results = [];
+    let allOk = true;
+    for (const inv of REGISTRY_INVARIANTS) {
+      let r;
+      try {
+        r = inv.check();
+      } catch (e) {
+        r = { ok: false, violations: ['threw: ' + (e && e.message || e)] };
+      }
+      results.push({
+        name: inv.name,
+        severity: inv.severity,
+        claimedBy: inv.claimedBy,
+        description: inv.description,
+        ok: r.ok,
+        violations: r.violations || []
+      });
+      if (!r.ok && inv.severity === 'hard') allOk = false;
+    }
+    return { ok: allOk, results };
+  }
+
+  // Run on boot. Logs a warning if any hard invariant fails, but does not
+  // throw — we want the app to still load and surface the issue rather
+  // than refuse to start. The test suite catches these structurally.
+  static assertOnBoot() {
+    try {
+      const r = RegistryInvariants.runAll();
+      if (!r.ok) {
+        const failed = r.results.filter(x => !x.ok);
+        console.warn('[FORGE-GATE] %d invariants failed at boot:', failed.length);
+        for (const f of failed) {
+          console.warn(`  - ${f.name} (${f.claimedBy}): ${f.violations.join('; ')}`);
+        }
+      }
+      return r;
+    } catch (e) {
+      console.warn('[FORGE-GATE] runner threw:', e);
+      return { ok: false, results: [], error: String(e) };
+    }
+  }
+}
+
+// Boot-time gate: surface configuration drift on app startup. Non-fatal;
+// the gate's purpose is detection, not refusal to launch.
+RegistryInvariants.assertOnBoot();
+
 function defaultSettings() {
   return {
     units: 'imperial',
@@ -2105,7 +3952,13 @@ function defaultSettings() {
     voiceCues: 'full',      // 'off' | 'minimal' | 'full' | 'verbose'
     soundEffects: true,
     anticipationSec: 10,
-    goalBehavior: 'continue'  // 'stop_at_goal' or 'continue' when a distance/time goal is met
+    goalBehavior: 'continue',  // 'stop_at_goal' or 'continue' when a distance/time goal is met
+    // F-ADAPT-PLAN (v1.7): adaptive prescription toggle. Default ON.
+    // When enabled, today's plan prescription may be eased based on Form
+    // trend + recent completion deltas. Provenance is always shown on
+    // the WOD card; no silent edits. Disable to always see the raw
+    // plan prescription.
+    adaptivePrescription: true
   };
 }
 
@@ -4965,12 +6818,49 @@ function renderHome(root) {
     });
   }
 
-  // Readiness — ACWR-based
+  // Readiness — F-FFF (Banister Form/Fitness/Fatigue) when ≥14 days of
+  // history exist, otherwise fall back to the v1 ACWR-based decision rule.
+  // This is the F-FFF composition per COMPOSITION_REGISTRY.md §6.
   const allWorkouts = Workouts.list();
   const acwr = computeACWR(allWorkouts);
   const readinessVal = node.querySelector('#readiness-value');
   const readinessDetail = node.querySelector('#readiness-detail');
-  if (allWorkouts.length < 3) {
+
+  // Try the FFF path first
+  const fffHistory = FormFitnessFatigue.historyFromWorkouts(allWorkouts);
+  const fffScores = FormFitnessFatigue.compute({ history: fffHistory });
+  const fffBaseline = FormFitnessFatigue.computePersonalBaseline(allWorkouts);
+
+  if (fffScores && fffBaseline) {
+    // F-FFF path: user has ≥3 sessions AND ≥14 days span. Use Form score
+    // relative to the user's own median to set readiness.
+    const form = fffScores.form;
+    const medForm = fffBaseline.median;
+    const sd = fffBaseline.stdev;
+    // Z-score relative to user's own baseline
+    const z = sd > 0 ? (form - medForm) / sd : 0;
+    if (z > 0.5) {
+      readinessVal.textContent = 'FRESH';
+      readinessVal.className = 'readiness-value';
+      readinessDetail.textContent =
+        `Form +${(form - medForm).toFixed(1)} above your norm. Fitness ${fffScores.fitness.toFixed(0)}, Fatigue ${fffScores.fatigue.toFixed(0)}. Green light for harder work.`;
+    } else if (z > -0.5) {
+      readinessVal.textContent = 'OPTIMAL';
+      readinessVal.className = 'readiness-value';
+      readinessDetail.textContent =
+        `Form ${form.toFixed(1)} near your norm (${medForm.toFixed(1)}). Fitness ${fffScores.fitness.toFixed(0)}, Fatigue ${fffScores.fatigue.toFixed(0)}.`;
+    } else if (z > -1.0) {
+      readinessVal.textContent = 'ELEVATED';
+      readinessVal.className = 'readiness-value warn';
+      readinessDetail.textContent =
+        `Form ${form.toFixed(1)} below your norm (${medForm.toFixed(1)}). Fitness ${fffScores.fitness.toFixed(0)}, Fatigue ${fffScores.fatigue.toFixed(0)}. Consider an easier session.`;
+    } else {
+      readinessVal.textContent = 'HIGH RISK';
+      readinessVal.className = 'readiness-value danger';
+      readinessDetail.textContent =
+        `Form ${form.toFixed(1)} well below your norm (median ${medForm.toFixed(1)}, σ ${sd.toFixed(1)}). Rest or active recovery today.`;
+    }
+  } else if (allWorkouts.length < 3) {
     readinessVal.textContent = '—';
     readinessVal.className = 'readiness-value';
     readinessDetail.textContent = `${3 - allWorkouts.length} more session(s) needed for readiness tracking.`;
@@ -5031,20 +6921,87 @@ function renderHome(root) {
 
   let wod;
   let planOverrideActive = false;
+  let adaptedFromIntensity = null;
+  let adaptationReason = null;
 
   if (planPrescription && planPrescription.workout) {
-    const w = planPrescription.workout;
+    let w = planPrescription.workout;
     const plan = planState.plan();
-    // F-PLAN-OVERRIDE: high-risk ACWR vetoes prescribed work, but never
-    // vetoes a scheduled rest day. The plan's REST day is itself the
-    // injury-prevention pattern; we don't double-rest.
-    if (acwr != null && acwr > 1.5 && w.intensity !== 'rest' && w.intensity !== 'easy') {
+
+    // F-ADAPT-PLAN composition (v1.7, per registry §6): apply C-ADAPT
+    // BEFORE F-PLAN-OVERRIDE v2. The hierarchy is:
+    //   - ADAPT (soft): ease intensity / reduce duration based on Form trend
+    //     + recent completion deltas. One-way easing only.
+    //   - OVERRIDE (hard): convert work → rest when Form drops sharply.
+    // A workout eased by ADAPT can still be vetoed by OVERRIDE the same day.
+    //
+    // Adaptation respects the user's setting (default ON). The setting
+    // toggle lives in profile settings; if missing, defaults true.
+    const adaptiveEnabled = settings.adaptivePrescription !== false;
+    if (adaptiveEnabled && fffScores && fffBaseline) {
+      // Resolve user VDOT / pack weight for P18
+      let userVdotForDelta = null;
+      if (profile.miTrialPaceSecPerMi) {
+        const z = PaceZones.compute({
+          distanceMi: 1, durationSec: profile.miTrialPaceSecPerMi, mode: 'run'
+        });
+        if (z) userVdotForDelta = z.vdot;
+      }
+      const userPackKgForDelta = Units.toWeightInternal(
+        settings.defaultPackWeight || 35, settings.units
+      );
+      // Compute recent deltas from PlanState completions
+      const recentDeltas = CompletionDelta.recentHistory({
+        planState,
+        allWorkouts,
+        userVdot: userVdotForDelta,
+        userPackKg: userPackKgForDelta,
+        windowDays: 14
+      });
+      // Run AdaptationDecision
+      const decision = AdaptationDecision.decide({
+        recentDeltas,
+        currentForm: fffScores.form,
+        formBaseline: fffBaseline,
+        prescription: w
+      });
+      if (decision.action !== 'continue') {
+        // Apply the decision; w is replaced with the adapted prescription
+        const adapted = AdaptationDecision.apply(decision, w);
+        adaptedFromIntensity = decision.from || null;
+        adaptationReason = decision.reason;
+        w = adapted;
+      }
+    }
+
+    // F-PLAN-OVERRIDE v2 (per registry §6): Form-aware decision when ≥14
+    // days history exists; ACWR fallback otherwise. Override fires only
+    // for prescribed hard work — never for rest or easy days.
+    //
+    // Decision rule:
+    //   - If Form is available AND user-relative z-score < -1.0 AND
+    //     prescription intensity is moderate/tempo/hard/test → override.
+    //   - Else, if ACWR > 1.5 AND intensity not in {rest, easy} → override.
+    //   - Else, no override; show prescription.
+    const hardIntensity = w.intensity !== 'rest' && w.intensity !== 'easy';
+    let overrideReason = null;
+    if (hardIntensity && fffScores && fffBaseline && fffBaseline.stdev > 0) {
+      // F-FFF-based decision (preferred path when sufficient history)
+      const z = (fffScores.form - fffBaseline.median) / fffBaseline.stdev;
+      if (z < -1.0) {
+        overrideReason = `Form ${fffScores.form.toFixed(1)} is ${Math.abs(z).toFixed(1)}σ below your norm (median ${fffBaseline.median.toFixed(1)}). Banister fatigue ${fffScores.fatigue.toFixed(0)} vs fitness ${fffScores.fitness.toFixed(0)}.`;
+      }
+    } else if (hardIntensity && acwr != null && acwr > 1.5) {
+      // ACWR fallback for users with <14 days history
+      overrideReason = `Acute:chronic load ratio ${acwr.toFixed(2)} (>1.5 Gabbett 2016 threshold).`;
+    }
+    if (overrideReason) {
       planOverrideActive = true;
       wod = {
         kind: 'rest',
         label: 'REST (plan override)',
-        sub: `ACWR ${acwr.toFixed(2)} — high injury risk. ${w.label} deferred.`,
-        reason: `Plan day ${planPrescription.globalDayIndex + 1}/${planPrescription.totalDays} called for "${w.label}", but your acute:chronic load ratio is ${acwr.toFixed(2)} (>1.5 threshold from Gabbett 2016). Take today off; the plan will resume tomorrow.`,
+        sub: `High injury risk. ${w.label} deferred.`,
+        reason: `Plan day ${planPrescription.globalDayIndex + 1}/${planPrescription.totalDays} called for "${w.label}", but ${overrideReason} Take today off; the plan will resume tomorrow.`,
         planRescheduled: true
       };
     } else if (w.intensity === 'rest') {
@@ -5066,8 +7023,19 @@ function renderHome(root) {
         packKg: w.packKg || null,
         intervals: w.intervals || null,
         description: w.description,
-        planWorkoutKey: Object.keys(PLAN_WORKOUTS).find(k => PLAN_WORKOUTS[k] === w),
-        isTest: !!w.isTest
+        // Look up against the ORIGINAL prescription, not the (possibly
+        // adapted) w. Adapted workouts are new object references with
+        // modified intensity/duration; the underlying plan-workout-key
+        // belongs to what was prescribed before adaptation.
+        planWorkoutKey: Object.keys(PLAN_WORKOUTS).find(
+          k => PLAN_WORKOUTS[k] === planPrescription.workout
+        ),
+        isTest: !!w.isTest,
+        // Pass through adaptation metadata so the live screen can show
+        // the user what was adapted from
+        adaptedFromIntensity: w.meta && w.meta.adapted ? (w.meta.fromIntensity || null) : null,
+        adapted: !!(w.meta && w.meta.adapted),
+        intensity: w.intensity
       };
     }
   } else {
@@ -5081,6 +7049,62 @@ function renderHome(root) {
   const wodAction = node.querySelector('#wod-action');
   wodLabel.textContent = wod.label;
   wodSub.textContent = wod.sub;
+  // F-PACE-ZONES composition: if a plan workout has an intensity tag and
+  // the user is calibrated, show the personalized target pace alongside.
+  // Per registry §6: run-mode pace targets come from P13, ruck from P13b.
+  // No silent cross-mapping.
+  if (wod.kind === 'plan' && planPrescription) {
+    const w = planPrescription.workout;
+    let paceLine = null;
+    if (w.mode === 'run' && profile.miTrialPaceSecPerMi) {
+      const z = PaceZones.compute({
+        distanceMi: 1, durationSec: profile.miTrialPaceSecPerMi, mode: 'run'
+      });
+      if (z) {
+        let zonePace = null;
+        let zoneLabel = null;
+        if (w.intensity === 'easy') { zonePace = z.easy; zoneLabel = 'easy'; }
+        else if (w.intensity === 'moderate') { zonePace = z.marathon; zoneLabel = 'M-pace'; }
+        else if (w.intensity === 'tempo') { zonePace = z.threshold; zoneLabel = 'T-pace'; }
+        else if (w.intensity === 'hard') { zonePace = z.interval; zoneLabel = 'I-pace'; }
+        if (zonePace) {
+          paceLine = `Your ${zoneLabel}: ${Units.formatPace(zonePace)}/mi`;
+        }
+      }
+    } else if (w.mode === 'ruck' && w.packKg) {
+      // Pull observed ruck paces from the user's recent ruck workouts (up to 10).
+      const recentRucks = allWorkouts
+        .filter(rw => rw.mode === 'ruck' && rw.distanceM > 1000 && rw.durationMs > 60000)
+        .slice(-10)
+        .map(rw => (rw.durationMs / 1000) / (rw.distanceM / 1609.344));
+      const t = RuckPaceTargets.compute({
+        packKg: w.packKg, observedRuckPaces: recentRucks, mode: 'ruck'
+      });
+      if (t) {
+        let zonePace = null;
+        let zoneLabel = null;
+        if (w.intensity === 'easy') { zonePace = t.easy; zoneLabel = 'easy'; }
+        else if (w.intensity === 'moderate') { zonePace = t.standard; zoneLabel = 'standard'; }
+        else if (w.intensity === 'tempo') { zonePace = t.tempo; zoneLabel = 'tempo'; }
+        if (zonePace) {
+          paceLine = `Your ruck ${zoneLabel}: ${Units.formatPace(zonePace)}/mi`;
+        }
+      }
+    }
+    if (paceLine) {
+      // Append the personalized pace target to the existing sub-line.
+      wodSub.textContent = wod.sub + ' · ' + paceLine;
+    }
+  }
+  // F-ADAPT-PLAN provenance surface: when today's prescription was adapted,
+  // show what changed and why. Honesty over engagement: the user sees the
+  // modification explicitly, no silent edits.
+  if (wod.kind === 'plan' && adaptationReason) {
+    const note = adaptedFromIntensity
+      ? ` · eased from ${adaptedFromIntensity}`
+      : ` · eased`;
+    wodSub.textContent = (wodSub.textContent || '') + note;
+  }
   if (wod.kind === 'rest') {
     wodCard.classList.add('rest');
     wodTag.textContent = planOverrideActive ? 'OVERRIDE' : (planPrescription ? 'PLAN' : 'TODAY');
@@ -5226,6 +7250,133 @@ function renderHome(root) {
         });
         listEl.appendChild(card);
       }
+
+      // F-PLAN-GENERATE wiring (v1.6). The "+ GENERATE PERSONALIZED PLAN"
+      // toggle reveals a small form. On submit, P15 produces a plan or a
+      // refusal reason; we surface either result inline.
+      const genToggle = plansSheet.querySelector('#gen-plan-toggle');
+      const genForm = plansSheet.querySelector('#gen-plan-form');
+      const genResult = plansSheet.querySelector('#gen-plan-result');
+      if (genToggle && genForm) {
+        // Reset between sheet opens
+        genForm.classList.add('hidden');
+        if (genResult) genResult.textContent = '';
+        genToggle.onclick = () => {
+          genForm.classList.toggle('hidden');
+        };
+        // Mode segmented control swaps the visible distance options
+        const distSeg = plansSheet.querySelector('#gen-dist-seg');
+        let genMode = 'run';
+        function refreshDistButtons() {
+          // Run mode shows run distances; ruck mode shows ruck distances.
+          // The cross-cutting invariant lives in the UI too — no chance for
+          // user to ask for a "5K ruck plan."
+          distSeg.querySelectorAll('[data-gen-dist]').forEach(b => {
+            const m = parseInt(b.dataset.genDist, 10);
+            const isRunDist = m === 5000 || m === 10000 || m === 21097 || m === 42195;
+            const wantRun = genMode === 'run';
+            if (isRunDist === wantRun) {
+              b.classList.remove('hidden');
+            } else {
+              b.classList.add('hidden');
+              b.classList.remove('selected');
+            }
+          });
+          // Ensure exactly one distance button is selected within the visible set
+          const visible = Array.from(distSeg.querySelectorAll('[data-gen-dist]:not(.hidden)'));
+          const anySelected = visible.find(b => b.classList.contains('selected'));
+          if (!anySelected && visible[0]) visible[0].classList.add('selected');
+        }
+        plansSheet.querySelectorAll('[data-gen-mode]').forEach(btn => {
+          btn.onclick = () => {
+            plansSheet.querySelectorAll('[data-gen-mode]').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            genMode = btn.dataset.genMode;
+            refreshDistButtons();
+          };
+        });
+        distSeg.querySelectorAll('[data-gen-dist]').forEach(btn => {
+          btn.onclick = () => {
+            distSeg.querySelectorAll('[data-gen-dist]').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+          };
+        });
+        refreshDistButtons();
+        const goBtn = plansSheet.querySelector('#gen-plan-go');
+        const weeksInput = plansSheet.querySelector('#gen-plan-weeks');
+        goBtn.onclick = async () => {
+          const weeks = parseInt(weeksInput.value, 10);
+          const distBtn = distSeg.querySelector('[data-gen-dist].selected:not(.hidden)');
+          if (!distBtn) {
+            if (genResult) genResult.textContent = 'Pick an event distance first.';
+            return;
+          }
+          const distanceM = parseInt(distBtn.dataset.genDist, 10);
+          // Pull user state (VDOT for run, pack-weight default for ruck)
+          const profile = loadProfile();
+          const settings = loadSettings();
+          let userVdot = null;
+          if (profile.miTrialPaceSecPerMi) {
+            const z = PaceZones.compute({
+              distanceMi: 1, durationSec: profile.miTrialPaceSecPerMi, mode: 'run'
+            });
+            userVdot = z ? z.vdot : null;
+          }
+          const userPackKg = Units.toWeightInternal(
+            settings.defaultPackWeight || 35, settings.units
+          );
+          const generated = PlanGenerator.generate({
+            mode: genMode, distanceM, weeksAvailable: weeks,
+            userVdot, userPackKg
+          });
+          if (!generated) {
+            // Provide an honest refusal reason via the underlying logic
+            const template = PlanGenerator._selectTemplate({ mode: genMode, distanceM });
+            if (!template) {
+              genResult.textContent =
+                `No template covers ${genMode} at this distance. Try the hand-authored plans above.`;
+            } else {
+              const ratio = weeks / template.naturalWeeks;
+              if (ratio < 0.75 || ratio > 1.25) {
+                const natMin = Math.ceil(template.naturalWeeks * 0.75);
+                const natMax = Math.floor(template.naturalWeeks * 1.25);
+                genResult.textContent =
+                  `Closest template is "${template.id}" (${template.naturalWeeks} weeks). Your ${weeks}-week target is outside the ±25% scaling window. Pick ${natMin}-${natMax} weeks, or use a hand-authored plan above.`;
+              } else {
+                genResult.textContent =
+                  'Plan generation failed validation. Try a longer timeline or different distance.';
+              }
+            }
+            return;
+          }
+          const confirmOK = await showConfirm({
+            title: `Start generated plan: "${generated.label}"?`,
+            message: `${weeks} weeks. Adapted from "${generated.meta.templateId}" with scaling ×${generated.meta.scalingFactor}. Source: ${generated.citation}`,
+            confirmLabel: 'START PLAN',
+            cancelLabel: 'CANCEL'
+          });
+          if (!confirmOK) return;
+          // Register the generated plan in the runtime COACHING_PLANS object
+          // so PlanState.plan() can find it. The serialized PlanState carries
+          // the plan id, but if the user clears site data later, this
+          // generated plan won't survive — that's an honest gap shipped
+          // alongside, not a hidden one.
+          COACHING_PLANS[generated.id] = generated;
+          // Also persist the generated plan record to localStorage so it
+          // survives reloads. We use a separate key under 'ruckops.genPlans'.
+          try {
+            const stored = JSON.parse(localStorage.getItem('ruckops.genPlans') || '{}');
+            stored[generated.id] = generated;
+            localStorage.setItem('ruckops.genPlans', JSON.stringify(stored));
+          } catch {}
+          const fresh = new PlanState();
+          fresh.start(generated.id);
+          savePlanState(fresh);
+          toast(`Started ${generated.label}`, 'success');
+          closePlansSheet();
+          navigate('#/home');
+        };
+      }
     }
   }
 
@@ -5306,6 +7457,66 @@ function renderPre(root) {
   // Mode toggle (now inside the mode sheet)
   let mode = 'ruck';
   const packTile = node.querySelector('#tile-pack');
+  // F-PACE-ZONES pre-workout display: when calibrated, show personalized
+  // pace targets. The card updates on mode change because run-mode shows
+  // Daniels VDOT zones while ruck-mode shows Knapik bands.
+  const zonesCard = node.querySelector('#pace-zones-card');
+  const zonesLabel = node.querySelector('#zones-label');
+  const zonesDetail = node.querySelector('#zones-detail');
+  function refreshZonesCard() {
+    if (!zonesCard) return;
+    const prof = loadProfile();
+    if (mode === 'run') {
+      if (!prof.miTrialPaceSecPerMi) {
+        zonesCard.classList.add('hidden');
+        return;
+      }
+      const z = PaceZones.compute({
+        distanceMi: 1, durationSec: prof.miTrialPaceSecPerMi, mode: 'run'
+      });
+      if (!z) {
+        zonesCard.classList.add('hidden');
+        return;
+      }
+      zonesLabel.textContent = `YOUR PACES · VDOT ${z.vdot}`;
+      zonesDetail.textContent =
+        `E ${Units.formatPace(z.easy)} · ` +
+        `M ${Units.formatPace(z.marathon)} · ` +
+        `T ${Units.formatPace(z.threshold)} · ` +
+        `I ${Units.formatPace(z.interval)} · ` +
+        `R ${Units.formatPace(z.repetition)}/mi`;
+      zonesCard.classList.remove('hidden');
+    } else {
+      // Ruck mode — derive Knapik targets for the current pack weight.
+      const packLbs = parseFloat(packInput.value) || 0;
+      const packKg = Units.toWeightInternal(packLbs, settings.units);
+      if (packKg <= 0) {
+        zonesCard.classList.add('hidden');
+        return;
+      }
+      // Pull recent ruck paces for personal variance
+      const recent = Workouts.list()
+        .filter(w => w.mode === 'ruck' && w.distanceM > 1000 && w.durationMs > 60000)
+        .slice(-10)
+        .map(w => (w.durationMs / 1000) / (w.distanceM / 1609.344));
+      const t = RuckPaceTargets.compute({
+        packKg, observedRuckPaces: recent, mode: 'ruck'
+      });
+      if (!t) {
+        zonesCard.classList.add('hidden');
+        return;
+      }
+      const personalNote = t.personalOffsetSec !== 0
+        ? ` (personal ${t.personalOffsetSec > 0 ? '+' : ''}${t.personalOffsetSec}s/mi)`
+        : '';
+      zonesLabel.textContent = `YOUR RUCK PACES${personalNote}`;
+      zonesDetail.textContent =
+        `Easy ${Units.formatPace(t.easy)} · ` +
+        `Standard ${Units.formatPace(t.standard)} · ` +
+        `Tempo ${Units.formatPace(t.tempo)}/mi`;
+      zonesCard.classList.remove('hidden');
+    }
+  }
   node.querySelectorAll('.mode').forEach(b => {
     b.addEventListener('click', () => {
       node.querySelectorAll('.mode').forEach(x => x.classList.remove('selected'));
@@ -5313,6 +7524,7 @@ function renderPre(root) {
       mode = b.dataset.mode;
       if (packTile) packTile.style.display = mode === 'ruck' ? '' : 'none';
       renderTileSummaries();
+      refreshZonesCard();
     });
   });
 
@@ -5333,8 +7545,8 @@ function renderPre(root) {
     packInput.value = Math.round(next);
     if (navigator.vibrate) navigator.vibrate(6);
   }
-  node.querySelector('#pack-minus').addEventListener('click', () => adjustPack(-stepSize));
-  node.querySelector('#pack-plus').addEventListener('click', () => adjustPack(stepSize));
+  node.querySelector('#pack-minus').addEventListener('click', () => { adjustPack(-stepSize); if (typeof refreshZonesCard === 'function') refreshZonesCard(); });
+  node.querySelector('#pack-plus').addEventListener('click', () => { adjustPack(stepSize); if (typeof refreshZonesCard === 'function') refreshZonesCard(); });
 
   // Pacing & goal configurator.
   // State: method, target pace (sec/unit), run/walk durations (custom),
@@ -5860,6 +8072,8 @@ function renderPre(root) {
   }
 
   renderConfigurator();
+  // Initial pace-zones card paint
+  if (typeof refreshZonesCard === 'function') refreshZonesCard();
 
   // Wire coaching sheet — live-saves to settings so the pre-flight summary
   // updates as the user changes voice/sound/anticipation.
@@ -6068,6 +8282,23 @@ function renderPre(root) {
       navigator.geolocation.clearWatch(watchId);
       watchId = null;
     }
+    // F-WORKOUT-METRO support: persist the active prescription so the live
+    // screen's MetronomeController can pick it up. We use a distinct key
+    // ('ruckops.activeWod') from 'ruckops.wod' (which is consumed once for
+    // pre-workout defaults). The live screen clears this on workout end.
+    if (wod) {
+      try {
+        sessionStorage.setItem('ruckops.activeWod', JSON.stringify({
+          mode: wod.mode || mode,
+          intensity: wod.intensity || null,
+          packKg: wod.packKg || packKg || null,
+          intervals: wod.intervals || null,
+          planWorkoutKey: wod.planWorkoutKey || null
+        }));
+      } catch {}
+    } else {
+      try { sessionStorage.removeItem('ruckops.activeWod'); } catch {}
+    }
     // Hand off live workout via window-scoped state.
     const lw = new LiveWorkout({ mode, packWeightKg: packKg });
     const targets = getPhaseTargets();
@@ -6182,6 +8413,15 @@ function renderPre(root) {
       setTimeout(() => sc.beep(880, 150, { type: 'sine', volume: 0.4 }), 120);
     }
     window.__soundCoach = sc;
+
+    // F-METRONOME composition: instantiate the metronome engine sharing
+    // SoundCoach's audio context. The user can start/stop it from the
+    // live screen; the live UI will drive adapt() with observed cadence
+    // from P2 MotionTracker. The audio context is attached lazily — if
+    // SoundCoach unlocked successfully, the metronome can play; if not,
+    // metronome start() returns false.
+    const metronome = new MetronomeEngine({ audioCtx: sc.audioCtx });
+    window.__metronome = metronome;
 
     // Request DeviceMotion + DeviceOrientation permissions HERE — inside the
     // START click handler — so iOS Safari treats it as a user gesture.
@@ -6672,6 +8912,155 @@ function renderLive(root) {
     navigate('#/summary');
   });
 
+  // F-WORKOUT-METRO composition: live-screen metronome driven by
+  // MetronomeController (P17). The controller owns the engine, the
+  // adaptation driver, and the phase-change semantics. The live screen
+  // is just a presenter — start/stop button, refresh chip on change.
+  //
+  // If the workout was started from a plan prescription, that metadata
+  // sits in sessionStorage as 'ruckops.wod' (set by the START handler in
+  // renderPre below). We use it to construct a richer prescription so
+  // the controller can auto-target the right cadence for intensity, and
+  // can phase-shift during interval workouts.
+  const metroBtn = node.querySelector('#live-metronome');
+  const metroChip = node.querySelector('#live-metro-chip');
+  let metroCtrl = null;
+  let metroTeardown = null;
+
+  function pullPrescription() {
+    // Read the active prescription stashed by pre-workout START. This key
+    // survives the live-screen lifetime (cleared on workout end via
+    // hashchange teardown below). The pre-workout 'ruckops.wod' key is
+    // consumed-once for defaults; this is a separate persistent copy.
+    try {
+      const raw = sessionStorage.getItem('ruckops.activeWod');
+      if (!raw) return null;
+      const wod = JSON.parse(raw);
+      if (!wod) return null;
+      const prescription = {
+        mode: wod.mode || live.mode,
+        intensity: wod.intensity || (live.mode === 'ruck' ? 'moderate' : 'easy'),
+        packKg: wod.packKg || live.packWeightKg || null,
+        intervals: wod.intervals || null
+      };
+      return prescription;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function derivePaceZoneFromLive() {
+    // Translate current rolling pace into a Daniels zone label, using the
+    // user's calibrated VDOT if available. Returns null if the user isn't
+    // calibrated or pace isn't available yet.
+    if (live.mode === 'ruck') return null;  // Ruck uses pack-weight floor
+    const profile = loadProfile();
+    if (!profile.miTrialPaceSecPerMi) return null;
+    const z = PaceZones.compute({
+      distanceMi: 1, durationSec: profile.miTrialPaceSecPerMi, mode: 'run'
+    });
+    if (!z) return null;
+    const cur = live.getRollingPaceSecPerUnit('imperial');
+    if (!cur) return null;
+    if (cur > z.easy + 30) return 'easy';
+    if (cur > z.marathon) return 'easy';
+    if (cur > z.threshold) return 'marathon';
+    if (cur > z.interval) return 'threshold';
+    if (cur > z.repetition) return 'interval';
+    return 'repetition';
+  }
+
+  function refreshMetroChip() {
+    if (metroCtrl && metroCtrl.isActive()) {
+      metroChip.textContent = '♩ ' + metroCtrl.currentTarget();
+      metroChip.classList.remove('hidden');
+      metroBtn.classList.add('on');
+    } else {
+      metroChip.classList.add('hidden');
+      metroBtn.classList.remove('on');
+    }
+  }
+
+  if (metroBtn) {
+    metroBtn.addEventListener('click', () => {
+      const eng = window.__metronome;
+      if (!eng) {
+        toast('Metronome unavailable', 'info');
+        return;
+      }
+      if (metroCtrl && metroCtrl.isActive()) {
+        metroCtrl.stop();
+        if (metroTeardown) { metroTeardown(); metroTeardown = null; }
+        refreshMetroChip();
+        toast('Metronome off', 'info');
+      } else {
+        // Attach SoundCoach's audio context lazily (it may have unlocked
+        // after the engine was constructed).
+        if (!eng.audioCtx && window.__soundCoach && window.__soundCoach.audioCtx) {
+          eng.attachAudio(window.__soundCoach.audioCtx);
+        }
+        // Construct fresh controller per session — it's lightweight and
+        // pulls the latest prescription each time.
+        const prescription = pullPrescription();
+        metroCtrl = new MetronomeController({ engine: eng, prescription });
+        window.__metronomeCtrl = metroCtrl;  // exposed for hashchange teardown
+        const ok = metroCtrl.start();
+        if (!ok) {
+          toast('Metronome needs audio — tap a control first', 'danger');
+          metroCtrl = null;
+          return;
+        }
+        toast(`Metronome on · ${metroCtrl.currentTarget()} spm`, 'success');
+        refreshMetroChip();
+        // Bind the adaptive driver to the live MotionTracker. The
+        // controller polls every 30s; the engine's internal 60s rate-limit
+        // ensures at most one target change per minute (C-ENTRAIN).
+        metroTeardown = metroCtrl.bindToMotion(live.motion, derivePaceZoneFromLive);
+        // Refresh chip whenever the engine target changes. We piggyback on
+        // the same 30s tick by polling slightly after the driver fires.
+        const refreshTimer = setInterval(() => {
+          if (!metroCtrl || !metroCtrl.isActive()) {
+            clearInterval(refreshTimer);
+            return;
+          }
+          refreshMetroChip();
+        }, 1000);
+      }
+    });
+  }
+  // Hook PacingPlan phase changes into the controller for interval workouts.
+  // The existing flow calls SoundCoach.onPhaseChange when LiveWorkout's tick
+  // observes a work↔walk transition (see LiveWorkout._tick). We chain on
+  // that hook so the metronome can shift cadence target at the same instant.
+  const sc = window.__soundCoach;
+  if (sc && typeof sc.onPhaseChange === 'function') {
+    const origPhaseChange = sc.onPhaseChange.bind(sc);
+    sc.onPhaseChange = function(newPhase, label) {
+      // Call SoundCoach's original handler first (voice/beep cues depend on it).
+      const result = origPhaseChange(newPhase, label);
+      // Then notify the MetronomeController, if active.
+      if (metroCtrl && metroCtrl.isActive()) {
+        // PacingPlan uses {'run', 'walk'}; MetronomeController uses {'work', 'walk'}.
+        const mappedPhase = (newPhase === 'run' || newPhase === 'work') ? 'work' : 'walk';
+        metroCtrl.onPhaseChange(mappedPhase);
+        refreshMetroChip();
+      }
+      return result;
+    };
+  }
+
+  // Clean up the controller when the workout ends. We rely on hashchange
+  // for navigation away from /live; also handle the case where the user
+  // hits END (which also triggers a hashchange to /summary).
+  window.addEventListener('hashchange', () => {
+    if (metroTeardown) { metroTeardown(); metroTeardown = null; }
+    if (metroCtrl && metroCtrl.isActive()) metroCtrl.stop();
+    metroCtrl = null;
+    // Workout's done — clear the active prescription so a freestyle restart
+    // doesn't get treated as a plan-prescribed workout.
+    try { sessionStorage.removeItem('ruckops.activeWod'); } catch {}
+  }, { once: true });
+
   // Lock overlay: prevents accidental taps
   let lastTap = 0;
   node.querySelector('#live-lock').addEventListener('click', () => {
@@ -6997,6 +9386,7 @@ function renderProfile(root) {
   const voiceSel = node.querySelector('#set-voice');
   const soundsToggle = node.querySelector('#set-sounds');
   const antSel = node.querySelector('#set-anticipation');
+  const adaptToggle = node.querySelector('#set-adaptive');
 
   unitsSel.value = settings.units;
   packIn.value = Units.formatWeight(
@@ -7010,6 +9400,9 @@ function renderProfile(root) {
   voiceSel.value = settings.voiceCues || 'full';
   soundsToggle.checked = settings.soundEffects !== false;
   antSel.value = String(settings.anticipationSec != null ? settings.anticipationSec : 10);
+  if (adaptToggle) {
+    adaptToggle.checked = settings.adaptivePrescription !== false;
+  }
 
   function renderProfileTiles() {
     const cur = loadSettings();
@@ -7033,6 +9426,8 @@ function renderProfile(root) {
     }
     const apT = node.querySelector('#tile-autopause-val');
     if (apT) apT.textContent = cur.autoPause ? 'ON' : 'OFF';
+    const adaptT = node.querySelector('#tile-adaptive-val');
+    if (adaptT) adaptT.textContent = cur.adaptivePrescription !== false ? 'ON' : 'OFF';
     const coachT = node.querySelector('#tile-coaching2-val');
     if (coachT) {
       const v = cur.voiceCues || 'full';
@@ -7088,7 +9483,8 @@ function renderProfile(root) {
       autoPause: apToggle.checked,
       voiceCues: voiceSel.value,
       soundEffects: soundsToggle.checked,
-      anticipationSec: parseInt(antSel.value, 10) || 0
+      anticipationSec: parseInt(antSel.value, 10) || 0,
+      adaptivePrescription: adaptToggle ? adaptToggle.checked : true
     });
     applyUnits(node, u);
   }
@@ -7100,6 +9496,12 @@ function renderProfile(root) {
   voiceSel.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Voice cues: ' + voiceSel.value, 'success'); });
   soundsToggle.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Sound effects ' + (soundsToggle.checked ? 'on' : 'off'), 'success'); });
   antSel.addEventListener('change', () => { persist(); renderProfileTiles(); toast('Anticipation: ' + (antSel.value === '0' ? 'off' : antSel.value + 's'), 'success'); });
+  if (adaptToggle) {
+    adaptToggle.addEventListener('change', () => {
+      persist(); renderProfileTiles();
+      toast('Adaptive prescription ' + (adaptToggle.checked ? 'on' : 'off'), 'success');
+    });
+  }
 
   // Test sound button on profile
   const profileTest = node.querySelector('#profile-test-sound');

@@ -18,7 +18,7 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <link rel="stylesheet" href="styles.css?v=20260512a" />
+  <link rel="stylesheet" href="styles.css?v=20260512f" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&family=Roboto+Condensed:wght@700&display=swap" rel="stylesheet" />
 </head>
@@ -217,6 +217,39 @@
               <div class="plans-list" id="plans-list">
                 <!-- Populated dynamically -->
               </div>
+
+              <!-- F-PLAN-GENERATE (v1.6): personalized plan synthesis from templates -->
+              <div class="gen-plan-section">
+                <button class="btn btn-secondary" id="gen-plan-toggle">+ GENERATE PERSONALIZED PLAN</button>
+                <div class="gen-plan-form hidden" id="gen-plan-form">
+                  <p class="muted tiny">Adapted from the published templates above. Scaled to your fitness level. The template anchor is shown in the generated plan's metadata.</p>
+                  <div class="gen-plan-row">
+                    <label class="gen-plan-label">Mode</label>
+                    <div class="seg">
+                      <button class="seg-btn selected" data-gen-mode="run">RUN</button>
+                      <button class="seg-btn" data-gen-mode="ruck">RUCK</button>
+                    </div>
+                  </div>
+                  <div class="gen-plan-row">
+                    <label class="gen-plan-label">Event distance</label>
+                    <div class="seg" id="gen-dist-seg">
+                      <button class="seg-btn selected" data-gen-dist="5000">5K</button>
+                      <button class="seg-btn" data-gen-dist="10000">10K</button>
+                      <button class="seg-btn" data-gen-dist="21097">HALF</button>
+                      <button class="seg-btn" data-gen-dist="42195">MARATHON</button>
+                      <button class="seg-btn hidden" data-gen-dist="9656">6mi</button>
+                      <button class="seg-btn hidden" data-gen-dist="19312">12mi</button>
+                    </div>
+                  </div>
+                  <div class="gen-plan-row">
+                    <label class="gen-plan-label">Weeks until event</label>
+                    <input type="number" class="gen-plan-num" id="gen-plan-weeks" value="12" min="4" max="20" step="1">
+                  </div>
+                  <button class="btn btn-primary" id="gen-plan-go">GENERATE</button>
+                  <p class="gen-plan-result" id="gen-plan-result"></p>
+                </div>
+              </div>
+
               <p class="muted tiny">⚠ Plans are not medical advice. They are structured training schedules drawn from public literature. Talk to a physician before starting any new program if you have health concerns.</p>
             </div>
           </div>
@@ -326,6 +359,13 @@
           <span class="tile-label">PACK</span>
           <span class="tile-value" id="tile-pack-val">35 LBS</span>
         </button>
+      </div>
+
+      <!-- F-PACE-ZONES: shown when user has calibrated time-trial.
+           Hidden by default; renderPre toggles visibility. -->
+      <div class="zones-card hidden" id="pace-zones-card">
+        <span class="zones-label" id="zones-label">YOUR PACES</span>
+        <span class="zones-detail" id="zones-detail"></span>
       </div>
 
       <button class="tile tile-wide" data-sheet="pacing">
@@ -592,6 +632,7 @@
         <span class="hr-chip hidden" id="live-hr-chip"></span>
         <span class="hr-chip cadence hidden" id="live-cadence-chip"></span>
         <span class="hr-chip dr-active hidden" id="live-dr-chip">📍 PDR</span>
+        <button class="icon-btn" id="live-metronome" title="Cadence metronome" aria-label="Toggle metronome">♩</button>
         <button class="icon-btn" id="live-lock" title="Lock screen" aria-label="Lock screen">🔒</button>
       </header>
       <div class="fuel-alert hidden" id="fuel-alert">
@@ -751,6 +792,12 @@
         <span class="tile-value" id="tile-coaching2-val">Full voice · 10s anticip</span>
       </button>
 
+      <button class="tile tile-wide" data-sheet="p-adaptive">
+        <span class="tile-label">ADAPTIVE PRESCRIPTION</span>
+        <span class="tile-value" id="tile-adaptive-val">ON</span>
+        <span class="tile-detail">Eases plan prescriptions when Form trends down or pace consistently slower than target</span>
+      </button>
+
       <button class="tile tile-wide" id="tile-cal" data-route="#/calibration">
         <span class="tile-label">CALIBRATION</span>
         <span class="tile-value" id="tile-cal-val">Not calibrated · tap to run</span>
@@ -762,7 +809,7 @@
         <span class="tile-value" id="tile-storage-val">0 workouts · local only</span>
       </button>
 
-      <p class="muted small version-line">v1.3 · 2026-05-12a · web MVP · <a href="#" id="about-link">about</a></p>
+      <p class="muted small version-line">v1.8 · 2026-05-12f · web MVP · <a href="#" id="about-link">about</a></p>
 
       <nav class="tabbar">
         <a href="#/home" class="tab">HOME</a>
@@ -868,6 +915,26 @@
         </div>
       </div>
 
+      <div class="sheet hidden" id="sheet-p-adaptive">
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-card">
+          <div class="sheet-handle"></div>
+          <header class="sheet-header"><h3>ADAPTIVE PRESCRIPTION</h3><button class="sheet-close">DONE</button></header>
+          <div class="sheet-body">
+            <div class="setting-row">
+              <span class="muted">ENABLED</span>
+              <label class="toggle"><input type="checkbox" id="set-adaptive" /><span></span></label>
+            </div>
+            <p class="muted small">When ON, today's plan prescription may be eased automatically based on your recent training. Specifically:</p>
+            <p class="muted small">• <strong>Form score down</strong> (Banister Form &gt; 1σ below your norm) plus consistently slower pace than prescribed → intensity is eased one step (hard → moderate, tempo → moderate, etc.).</p>
+            <p class="muted small">• <strong>Consistently stopping short</strong> (median completion &lt; 85% of prescribed duration) → next prescribed duration is reduced toward what you actually do.</p>
+            <p class="muted small">The system <strong>never escalates</strong> intensity, never removes rest days, never extends durations. One-way easing only.</p>
+            <p class="muted small">When adaptation fires, today's workout-of-the-day card shows the original intensity in italics so you see exactly what was changed.</p>
+            <p class="muted small">Disable to always see the raw plan prescription, regardless of recent training.</p>
+          </div>
+        </div>
+      </div>
+
       <div class="sheet hidden" id="sheet-p-storage">
         <div class="sheet-backdrop"></div>
         <div class="sheet-card">
@@ -896,6 +963,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="app.js?v=20260512a" type="module"></script>
+  <script src="app.js?v=20260512f" type="module"></script>
 </body>
 </html>

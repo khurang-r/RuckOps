@@ -2378,3 +2378,122 @@ select {
   color: var(--olive, #4a5d23);
   margin-bottom: 6px;
 }
+
+/* ----- F-METRONOME: live header chip + button state ----- */
+.hr-chip.metronome {
+  background: rgba(244, 129, 31, 0.18);
+  color: var(--amber, #c9a45c);
+  border: 1px solid rgba(244, 129, 31, 0.4);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+.icon-btn.on {
+  background: var(--amber, #c9a45c);
+  color: #0D0F0D;
+}
+.icon-btn.on:active {
+  background: #d4b06a;
+}
+
+/* ----- F-PACE-ZONES: pre-workout pace zones card ----- */
+.zones-card {
+  background: rgba(244, 129, 31, 0.07);
+  border: 1px solid rgba(244, 129, 31, 0.25);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zones-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--amber, #c9a45c);
+  text-transform: uppercase;
+}
+.zones-detail {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-2, #b0b3b0);
+  line-height: 1.4;
+}
+
+/* ----- F-PLAN-GENERATE: generate-plan form styling ----- */
+.gen-plan-section {
+  margin: 16px 0;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+#gen-plan-toggle {
+  width: 100%;
+  font-size: 13px;
+}
+.gen-plan-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gen-plan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.gen-plan-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2, #b0b3b0);
+  min-width: 110px;
+}
+.seg {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 3px;
+  border-radius: 8px;
+}
+.seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-2, #b0b3b0);
+  padding: 6px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.seg-btn.selected {
+  background: var(--amber, #c9a45c);
+  color: #0D0F0D;
+}
+.seg-btn.hidden {
+  display: none;
+}
+.gen-plan-num {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--text, #ECECEC);
+  padding: 6px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  width: 70px;
+  text-align: center;
+}
+.gen-plan-result {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--amber, #c9a45c);
+  line-height: 1.4;
+  min-height: 16px;
+}

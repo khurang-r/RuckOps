@@ -10,7 +10,7 @@
  */
 
 // Bump this on every deploy to clear old caches.
-const CACHE = 'ruckops-2026-05-12a';
+const CACHE = 'ruckops-2026-05-12f';
 
 const CORE = [
   './',
